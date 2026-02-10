@@ -1,59 +1,72 @@
 import pandas as pd
+import torch
 from preprocessing import graph_encode
 from tqdm import tqdm
 from torch_geometric.nn.models.basic_gnn import GraphSAGE
-import torch
 from torch_geometric.data import Data
 import torch.nn.functional as F
-
-device = 'cpu'
-
-def train_graph(model, train_graph):
-    model.train()
-    optimizer.zero_grad()
-    G = train_graph.to(device)   
-    out= model(G.x.to(device), G.edge_index.to(device))
-    loss = F.cross_entropy(out, G.Attack)
-    loss.backward()
-    optimizer.step()
-    return loss.item()
-        
-def eval_graph(model, test_graph):
-    model.eval()
-    with torch.no_grad():
-        out = model(test_graph.x.to(device), test_graph.edge_index.to(device))
-    return F.cross_entropy(out, test_graph.Attack)
+import matplotlib.pyplot as plt, pickle
+from training import train_graph, eval_graph, epoch
+import numpy as np
+import os
+from datetime import datetime
+from pathlib import Path
+import torch.nn as nn
 
 
 # -- Script ---
 
+device = 'cpu'
+
 print('Loading data...')
-flows = pd.read_csv('interm/unsw_nb15_processed.csv')
-n_flows = len(flows)
-size = 500
+train_flows = pd.read_csv("interm/unsw_nb15_processed_train.csv")
+test_flows = pd.read_csv("interm/unsw_nb15_processed_test.csv")
+flows = pd.concat([train_flows, test_flows], ignore_index=True)
 
-model = GraphSAGE(
-    49,
-    hidden_channels=256,
-    out_channels=2,
-    num_layers=3,
-).to(device)
+attacks = np.unique(flows.Attack)
+attacks = [a for a in attacks if a != 'Benign']
+output_dir = Path(f"interm/metrics/graphSAGE_unsw_train_{datetime.now().strftime('%Y%m%d_%H%M%S')}")
+for attack in attacks:
 
-optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
+    # binary classification for each class
+    train_cp = train_flows.copy()
+    train_cp.Attack = (train_cp.Attack == attack).astype(int)
+    test_cp = test_flows.copy()
+    test_cp.Attack = (test_cp.Attack == attack).astype(int)
 
+    # weighted loss to handle class imbalance
+    criterion = nn.CrossEntropyLoss(weight=[np.sum(train_cp.Attack == 0).astype(float), 
+                                            np.sum(train_cp.Attack == 1).astype(float)])
 
-for i, start in enumerate(
-    tqdm(range(0, n_flows - 1, size))
-):
-    window_flows = flows.iloc[start:start + size]
-    window_graph, node_map = graph_encode(
-                        window_flows, 
-                       linegraph=True,  # ! uses linegraphs
-                       edge_cols=['src', 'dst'], 
-                       target_col='Attack')
-    
-    train_graph = Data(x=window_graph.x, edge_index=window_graph.edge_index, Attack=window_graph.Attack)
-    loss = train_graph(model, train_graph)
-    print(f'Window {i}, Loss: {loss}')
-    
+    test_cp.Attack = test_cp.Attack.astype(float)
+    train_cp.Attack = train_cp.Attack.astype(float)      
 
+    model = GraphSAGE(
+        49,
+        hidden_channels=256,
+        out_channels=2,
+        num_layers=2,
+    ).to(device)
+
+    outputs = {
+        'train_losses': [],
+        'test_losses': [],
+        'description': f'Binary classification on {attack} - GraphSAGE with linegraph on UNSW-NB15 dataset'
+    }
+
+    for epc in tqdm(range(1, 5+1)):
+        train_losses, avg_train_loss, train_ys, train_ypreds = epoch(model, train_cp, 
+                                                                     loss_fn=criterion)
+        test_losses, avg_test_loss, test_ys, test_ypreds = epoch(model, test_cp, 
+                                                                 evaluate_instead=True, 
+                                                                 loss_fn=criterion)
+        outputs['train_losses'].append(avg_train_loss)
+        outputs['test_losses'].append(avg_test_loss)
+
+    outputs['train predictions'] = (train_ys, train_ypreds)
+    outputs['test predictions'] = (test_ys, test_ypreds)
+    outputs['model'] = model.state_dict()
+
+    os.makedirs(output_dir, exist_ok=True)
+    with open(output_dir / f"{attack}_graphSAGE_unsw_train.pkl", "wb") as f:
+        pickle.dump(outputs, f) 

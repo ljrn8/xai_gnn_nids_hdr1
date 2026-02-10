@@ -3,6 +3,7 @@ venv
 interm
 env
 .venv
+archive
 
 
 ### automated :
