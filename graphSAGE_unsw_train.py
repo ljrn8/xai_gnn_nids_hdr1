@@ -35,8 +35,13 @@ for attack in attacks:
     test_cp.Attack = (test_cp.Attack == attack).astype(int)
 
     # weighted loss to handle class imbalance
-    criterion = nn.CrossEntropyLoss(weight=[np.sum(train_cp.Attack == 0).astype(float), 
-                                            np.sum(train_cp.Attack == 1).astype(float)])
+    criterion = nn.CrossEntropyLoss(
+        weight=torch.FloatTensor(
+            [
+                np.sum(train_cp.Attack == 0).astype(float), 
+                np.sum(train_cp.Attack == 1).astype(float)
+            ]
+    ).to(device))
 
     test_cp.Attack = test_cp.Attack.astype(float)
     train_cp.Attack = train_cp.Attack.astype(float)      
