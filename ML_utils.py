@@ -1,0 +1,131 @@
+import torch
+import numpy as np
+import torch
+import networkx as nx
+import pandas as pd
+import numpy as np
+from tqdm import tqdm
+from torch_geometric.data import Data
+from torch_geometric.transforms import LineGraph
+from copy import deepcopy
+from tqdm import tqdm
+import torch
+import torch.nn.functional as F
+
+device = 'cpu'
+
+def train_graph(model, train_graph, optimizer, loss_fn, y_train):
+    model.train()
+    optimizer.zero_grad()
+    G = train_graph.to(device)   
+    out = model(G.x.to(device), G.edge_index.to(device))
+    loss = loss_fn(out, y_train)
+    loss.backward()
+    optimizer.step()
+    return loss.item(), out, y_train
+        
+def eval_graph(model, test_graph, loss_fn, y_test):
+    with torch.no_grad():
+        out = model(test_graph.x.to(device), test_graph.edge_index.to(device))
+    y_test
+    return (
+        loss_fn(out, y_test), 
+        out, y_test
+    )
+
+def epoch(model, flows, loss_fn, optimizer=None, 
+          evaluate_instead=False, window_size=500):
+    """ 
+    Assumes 'flows' has columns src and dst for edge construction,
+    and 'Attack' for labels (float). 
+    """
+    if not optimizer:
+        optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
+
+    n_flows = len(flows)
+    losses, ys, ypreds = [], [], []
+    for i, start in enumerate(
+        tqdm(range(0, n_flows - 1, window_size)),
+    ):
+        window_flows = flows.iloc[start:start + window_size]
+        window_graph, node_map = graph_encode(
+                                window_flows, 
+                                linegraph=True,  # ! uses linegraphs
+                                edge_cols=['src', 'dst'], 
+                                target_col='Attack')
+        
+        if evaluate_instead:
+            loss, out, y = eval_graph(model, window_graph, loss_fn=loss_fn)
+        else:
+            loss, out, y = train_graph(model, window_graph, optimizer, loss_fn=loss_fn)
+
+        losses.append(loss)
+        ys.append(y)
+        ypreds.append(out.argmax(dim=1))
+
+    return losses, sum(losses) / len(losses), ys, ypreds
+
+
+def yield_subgraphs(flows, window, le=None):
+    for start in range(0, len(flows) - 1, window):
+        window_flows = flows.iloc[start:start + window].copy()
+        y = deepcopy(window_flows.Attack.values)
+        window_flows.drop('Attack', axis=1, inplace=True)
+        window_graph, _ = graph_encode(
+            window_flows,
+            linegraph=True,
+            edge_cols=['src', 'dst'],
+        )
+        if le:
+            yield window_graph, torch.LongTensor(le.transform(window_flows.Attack))
+        else:
+            yield window_graph, torch.LongTensor(y)
+
+
+def graph_encode(data, edge_cols: list, 
+                 linegraph: bool, 
+                #  target_col: str
+                ):
+    """ Convert flow dataframe  (all cols numerical) 
+    to flow graph """
+
+    # ----- build edge features -----
+    attrs = [c for c in data.columns if c not in 
+             edge_cols 
+            #  + [target_col]
+             ]
+
+    x = data[attrs].to_numpy(dtype=np.float32)
+    edge_attr = torch.tensor(x, dtype=torch.float)
+
+    # edge_y = torch.tensor(
+        # data[target_col].values, dtype=torch.long
+    # )
+
+    nodes = pd.concat([data['src'], data['dst']]).unique()
+    node_map = {n: i for i, n in enumerate(nodes)}
+
+    src_name, dst_name = edge_cols
+    src = data[src_name].map(node_map).to_numpy()
+    dst = data[dst_name].map(node_map).to_numpy()
+
+    edge_index = torch.tensor(
+        np.stack([src, dst]), dtype=torch.long
+    )
+
+    G = Data(
+        edge_index=edge_index,
+        edge_attr=edge_attr,
+        # edge_y=edge_y,
+        num_nodes=len(nodes)
+    )
+
+    if linegraph:
+        G = LineGraph()(G)
+
+    return G, node_map
+
+
+
+
+

@@ -1,7 +1,6 @@
 import pandas as pd
 from sklearn.metrics import roc_auc_score
 import torch
-from preprocessing import graph_encode
 from tqdm import tqdm
 from torch_geometric.nn.models.basic_gnn import GraphSAGE
 from torch.utils.tensorboard import SummaryWriter
@@ -10,11 +9,11 @@ import os, pickle
 from datetime import datetime
 from pathlib import Path
 from sklearn.preprocessing import LabelEncoder
-from preprocessing import yield_subgraphs
+from ML_utils import yield_subgraphs
 
-WINDOW = 5000
+WINDOW = 20_000
 LR = 0.005
-EPOCHS = 3
+EPOCHS = 30
 
 # ------------------ Setup ------------------
 
@@ -42,7 +41,7 @@ writer = SummaryWriter(log_dir=exp_dir)
 # ------------------- Ensemble -------------------
 
 for a in classes:
-    if a == 'Benign':
+    if a == 'Benign' or a == 'Analysis': # !! skip analysis for now
         continue
 
     print(f'Training binary classifier for {a}...')
@@ -52,12 +51,20 @@ for a in classes:
     test_cp = test_flows.copy()
     train_cp.Attack = (train_cp.Attack == a).astype(int)
     test_cp.Attack = (test_cp.Attack == a).astype(int)
+
+    # only sample reasonable attack:benign ration from flows dataframe
+    ben_flows = train_cp[train_cp.Attack == 0]
+    mal_flows = train_cp[train_cp.Attack == 1]
+    sample_i = np.random.choice(range(len(ben_flows)), size=50_000,  # !! 
+                                replace=False)
+    train_cp = pd.concat([ben_flows.iloc[sample_i], mal_flows])
+    
         
     model_kwargs = {
         'in_channels': 72,
         'hidden_channels': 256,
         'out_channels': 2,
-        'num_layers': 2,
+        'num_layers': 3,
     }
 
     model = GraphSAGE(**model_kwargs).to(device)
@@ -65,15 +72,13 @@ for a in classes:
 
     # weight classes
     print(np.unique(train_cp.Attack, return_counts=True))
-    print(le.classes_)
     class_counts = np.bincount(train_cp.Attack)
     class_weights = 1.0 / class_counts
     class_weights = class_weights / class_weights.sum()
-    weights = torch.tensor(
-        class_weights, dtype=torch.float32).to(device)
+    weights = torch.tensor(class_weights, dtype=torch.float32).to(device) 
     
-    print(f"Class weights: {dict(zip(le.classes_, class_weights))}")
-    criterion = torch.nn.CrossEntropyLoss(weight=weights)
+    print(f"Class weights: {class_weights}")
+    criterion = torch.nn.CrossEntropyLoss() # !! not weighted
 
     best_test_loss = float("inf")
 
@@ -86,19 +91,16 @@ for a in classes:
         train_losses, train_accs = [], []
         y_preds, y_trues = [], []
         for G, y_train in yield_subgraphs(train_cp, window=WINDOW):
-            
-
             optimizer.zero_grad()
             out = model(G.x, G.edge_index)
             loss = criterion(out, y_train)
             loss.backward()
             optimizer.step()
-            train_losses.append(loss.item())
-
             pred = torch.argmax(out, dim=1)
             acc = (pred == y_train).float().mean().item()
-            train_accs.append(acc)
 
+            train_accs.append(acc)
+            train_losses.append(loss.item())
             y_trues.append(y_train.cpu())
             y_preds.append(pred.cpu())
 
@@ -110,7 +112,6 @@ for a in classes:
         class_auc = roc_auc_score(y_class, y_pred_class)
         writer.add_scalar(f"AUC/Train/{a}_auc", class_auc, epc)
                         
-
         avg_train_loss = np.mean(train_losses)
         avg_train_acc = np.mean(train_accs)
 
@@ -123,12 +124,9 @@ for a in classes:
                 out = model(G.x, G.edge_index)
                 loss = criterion(out, y_test)
 
-                test_losses.append(loss.item())
-
                 pred = torch.argmax(out, dim=1)
                 acc = (pred == y_test).float().mean().item()
                 test_accs.append(acc)
-
                 y_trues.append(y_test.cpu())
                 y_preds.append(pred.cpu())
 

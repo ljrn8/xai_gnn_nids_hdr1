@@ -1,7 +1,7 @@
 import pandas as pd
 from sklearn.metrics import roc_auc_score
 import torch
-from preprocessing import graph_encode
+from ML_utils import graph_encode
 from tqdm import tqdm
 from torch_geometric.nn.models.basic_gnn import GraphSAGE
 from torch.utils.tensorboard import SummaryWriter
@@ -10,7 +10,7 @@ import os, pickle
 from datetime import datetime
 from pathlib import Path
 from sklearn.preprocessing import LabelEncoder
-from preprocessing import yield_subgraphs
+from ML_utils import yield_subgraphs, train_graph, eval_graph, epoch
 
 WINDOW = 5000
 LR = 0.0003
