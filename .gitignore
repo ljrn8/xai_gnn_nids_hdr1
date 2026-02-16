@@ -4,6 +4,7 @@ interm
 env
 .venv
 archive
+tensorboard_venv
 
 
 ### automated :

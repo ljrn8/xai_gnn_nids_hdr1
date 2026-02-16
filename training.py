@@ -5,25 +5,23 @@ import torch.nn.functional as F
 
 device = 'cpu'
 
-def train_graph(model, train_graph, optimizer, loss_fn, target_col='edge_y'):
+def train_graph(model, train_graph, optimizer, loss_fn, y_train):
     model.train()
     optimizer.zero_grad()
     G = train_graph.to(device)   
     out = model(G.x.to(device), G.edge_index.to(device))
-    y = getattr(G, target_col).long()
-    loss = loss_fn(out, y)
+    loss = loss_fn(out, y_train)
     loss.backward()
     optimizer.step()
-    return loss.item(), out, y
+    return loss.item(), out, y_train
         
-def eval_graph(model, test_graph, loss_fn, target_col='edge_y'):
-    model.eval()
+def eval_graph(model, test_graph, loss_fn, y_test):
     with torch.no_grad():
         out = model(test_graph.x.to(device), test_graph.edge_index.to(device))
-    y = getattr(test_graph, target_col)
+    y_test
     return (
-        loss_fn(out, y), 
-        out, y
+        loss_fn(out, y_test), 
+        out, y_test
     )
 
 def epoch(model, flows, loss_fn, optimizer=None, 
@@ -53,7 +51,7 @@ def epoch(model, flows, loss_fn, optimizer=None,
             loss, out, y = train_graph(model, window_graph, optimizer, loss_fn=loss_fn)
 
         losses.append(loss)
-        ys.append(y.cpu())
-        ypreds.append(out.argmax(dim=1).cpu())
+        ys.append(y)
+        ypreds.append(out.argmax(dim=1))
 
     return losses, sum(losses) / len(losses), ys, ypreds
