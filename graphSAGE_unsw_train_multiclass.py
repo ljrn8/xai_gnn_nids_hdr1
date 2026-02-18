@@ -18,32 +18,32 @@ EPOCHS = 50
 
 # ------------------ Setup ------------------
 
-device = 'cpu'
-timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+device = "cpu"
+timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
 exp_dir = Path(f"interm/runs/unsw_graphsage_{timestamp}")
 exp_dir.mkdir(parents=True, exist_ok=True)
 
 writer = SummaryWriter(log_dir=exp_dir)
 
-print('Loading data...')
+print("Loading data...")
 train_flows = pd.read_csv("interm/unsw_nb15_processed_train.csv")
 test_flows = pd.read_csv("interm/unsw_nb15_processed_test.csv")
-classes= ['Benign', 'Exploits', 'DoS', 'Fuzzers']
+classes = ["Benign", "Exploits", "DoS", "Fuzzers"]
 train_flows = train_flows[train_flows.Attack.isin(classes)]
 test_flows = test_flows[test_flows.Attack.isin(classes)]
 
 flows = pd.concat([train_flows, test_flows], ignore_index=True)
-print('Loaded')
+print("Loaded")
 
 le = LabelEncoder()
 le.fit(flows.Attack)
 
 model_kwargs = {
-    'in_channels': 72,
-    'hidden_channels': 256,
-    'out_channels': len(classes),
-    'num_layers': 2,
+    "in_channels": 72,
+    "hidden_channels": 256,
+    "out_channels": len(classes),
+    "num_layers": 2,
 }
 
 model = GraphSAGE(**model_kwargs).to(device)
@@ -55,8 +55,7 @@ optimizer = torch.optim.Adam(model.parameters(), lr=LR)
 class_counts = np.bincount(le.transform(train_flows.Attack))
 class_weights = 1.0 / class_counts
 class_weights = class_weights / class_weights.sum()
-weights = torch.tensor(
-    class_weights, dtype=torch.float32).to(device)
+weights = torch.tensor(class_weights, dtype=torch.float32).to(device)
 print(f"Class weights: {dict(zip(le.classes_, class_weights))}")
 criterion = torch.nn.CrossEntropyLoss(weight=weights)
 
@@ -95,7 +94,6 @@ for epc in range(1, EPOCHS + 1):
         y_pred_class = y_preds == le.transform([a])[0]
         class_auc = roc_auc_score(y_class, y_pred_class)
         writer.add_scalar(f"AUC/Train/{a}_auc", class_auc, epc)
-                     
 
     avg_train_loss = np.mean(train_losses)
     avg_train_acc = np.mean(train_accs)
@@ -156,7 +154,7 @@ for epc in range(1, EPOCHS + 1):
 experiment_summary = {
     "description": "Multiclass GraphSAGE with linegraph on UNSW-NB15",
     "epochs": EPOCHS,
-    'model_kwargs': model_kwargs,
+    "model_kwargs": model_kwargs,
     "window_size": WINDOW,
     "le": le,
     "best_test_loss": best_test_loss,

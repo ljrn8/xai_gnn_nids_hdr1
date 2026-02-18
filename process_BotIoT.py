@@ -1,61 +1,79 @@
-
 import pandas as pd
 import numpy as np
 from pathlib import Path
 from sklearn.preprocessing import StandardScaler, LabelEncoder
 
-root = Path('raw\d509c9db7490cf92_NFV3DATA-A11964_A11964/data')
-flows = pd.read_csv(root / 'NF-BoT-IoT-v3.csv')
-features = pd.read_csv(root / 'NetFlow_v3_Features.csv')
+root = Path("raw\d509c9db7490cf92_NFV3DATA-A11964_A11964/data")
+flows = pd.read_csv(root / "NF-BoT-IoT-v3.csv")
+features = pd.read_csv(root / "NetFlow_v3_Features.csv")
 
-flows.drop('Label', axis=1, inplace=True) # inferred from Attack
+flows.drop("Label", axis=1, inplace=True)  # inferred from Attack
 
-flows['src'] = flows['IPV4_SRC_ADDR'].astype(str) + ':' + flows['L4_SRC_PORT'].astype(str)
-flows['dst'] = flows['IPV4_DST_ADDR'].astype(str) + ':' + flows['L4_DST_PORT'].astype(str)
-flows.drop(['IPV4_SRC_ADDR', 'IPV4_DST_ADDR', 'L4_SRC_PORT', 'L4_DST_PORT'], axis=1, inplace=True)
-
+flows["src"] = (
+    flows["IPV4_SRC_ADDR"].astype(str) + ":" + flows["L4_SRC_PORT"].astype(str)
+)
+flows["dst"] = (
+    flows["IPV4_DST_ADDR"].astype(str) + ":" + flows["L4_DST_PORT"].astype(str)
+)
+flows.drop(
+    ["IPV4_SRC_ADDR", "IPV4_DST_ADDR", "L4_SRC_PORT", "L4_DST_PORT"],
+    axis=1,
+    inplace=True,
+)
 
 # clamping
 non_ordinal = [
-    'PROTOCOL',
-    'L7_PROTO',
-    'ICMP_TYPE',
-    'ICMP_IPV4_TYPE',
-    'DNS_QUERY_ID',
-    'DNS_QUERY_TYPE',
-    'DNS_TTL_ANSWER',
-    'FTP_COMMAND_RET_CODE',
+    "PROTOCOL",
+    "L7_PROTO",
+    "ICMP_TYPE",
+    "ICMP_IPV4_TYPE",
+    "DNS_QUERY_ID",
+    "DNS_QUERY_TYPE",
+    "DNS_TTL_ANSWER",
+    "FTP_COMMAND_RET_CODE",
 ]
 
 high_count_categorical = [
-    'ICMP_TYPE', 'DNS_QUERY_ID',
-    'PROTOCOL', 'L7_PROTO', 'DNS_TTL_ANSWER', 'ICMP_IPV4_TYPE'
+    "ICMP_TYPE",
+    "DNS_QUERY_ID",
+    "PROTOCOL",
+    "L7_PROTO",
+    "DNS_TTL_ANSWER",
+    "ICMP_IPV4_TYPE",
 ]
 
 # clamping
 numerical = high_count_categorical
 numerical_df = flows[numerical]
 for feature in numerical_df.columns:
-    if numerical_df[feature].max()>10*numerical_df[feature].median() and numerical_df[feature].max()>10 :
+    if (
+        numerical_df[feature].max() > 10 * numerical_df[feature].median()
+        and numerical_df[feature].max() > 10
+    ):
         flows[feature] = np.where(
-            flows[feature]<flows[feature].quantile(0.95), 
-            flows[feature], flows[feature].quantile(0.95))
+            flows[feature] < flows[feature].quantile(0.95),
+            flows[feature],
+            flows[feature].quantile(0.95),
+        )
 
 for c in high_count_categorical:
     non_ordinal.remove(c)
 low_count_categorical = non_ordinal
 
-numerical = [c for c in flows.columns 
-             if c not in low_count_categorical 
-             and c not in high_count_categorical
-             and c not in  ('Label', 'Attack', 'src', 'dst')]
+numerical = [
+    c
+    for c in flows.columns
+    if c not in low_count_categorical
+    and c not in high_count_categorical
+    and c not in ("Label", "Attack", "src", "dst")
+]
 
 # remove inf
 for c in flows.columns:
     flows = flows[flows[c] != np.inf]
 
 
-flows = flows.sort_values(by='FLOW_START_MILLISECONDS')
+flows = flows.sort_values(by="FLOW_START_MILLISECONDS")
 
 
 # normalization, standrdization, OHE
@@ -65,11 +83,7 @@ flows[numerical] = ss.fit_transform(flows[numerical])
 
 for categorical in low_count_categorical:
     flows[categorical] = le.fit_transform(flows[categorical])
-flows = pd.get_dummies(
-    flows,
-    columns=low_count_categorical,
-    drop_first=False
-)
+flows = pd.get_dummies(flows, columns=low_count_categorical, drop_first=False)
 
 # print examples of rows from the processed dataset
 print("Sample rows from the processed dataset:")
@@ -77,10 +91,10 @@ print(flows.head(10))
 
 # print metadata about the dataset
 meta = {
-    'num_flows': len(flows),
-    'num_features': flows.shape[1] - 3, # excluding src, dst, Attack
-    'num_classes': flows.Attack.nunique(),
-    'class_distribution': flows.Attack.value_counts().to_dict(),
+    "num_flows": len(flows),
+    "num_features": flows.shape[1] - 3,  # excluding src, dst, Attack
+    "num_classes": flows.Attack.nunique(),
+    "class_distribution": flows.Attack.value_counts().to_dict(),
 }
 print(meta)
 
@@ -96,29 +110,33 @@ for c in flows.columns:
 
 # print unique values for categorical columns
 print("\nUnique values for categorical columns:")
-for c in [c for c in flows.columns 
-          if c not in numerical 
-          and c not in ('src', 'dst') 
-          and c not in high_count_categorical]:
+for c in [
+    c
+    for c in flows.columns
+    if c not in numerical
+    and c not in ("src", "dst")
+    and c not in high_count_categorical
+]:
     print(f"{c}: {flows[c].unique()}")
 
-flows.to_csv('./interm/BotIoT_processed.csv', index=False)
+flows.to_csv("./interm/BotIoT_processed.csv", index=False)
 
 test_split = 0.2
 train_flows, test_flows = (
-    flows.iloc[:int(len(flows) * (1 - test_split))], 
-    flows.iloc[int(len(flows) * (1 - test_split)):]
+    flows.iloc[: int(len(flows) * (1 - test_split))],
+    flows.iloc[int(len(flows) * (1 - test_split)) :],
 )
 
-test_flows.to_csv('./interm/BotIoT_processed_test.csv', index=False)
-train_flows.to_csv('./interm/BotIoT_processed_train.csv', index=False)
+test_flows.to_csv("./interm/BotIoT_processed_test.csv", index=False)
+train_flows.to_csv("./interm/BotIoT_processed_train.csv", index=False)
 
-# 10:1 benign:malicious ratio in the dataset, sample all malicious flows and 10x benign flows for training
-ben_flows = train_flows[train_flows.Attack == 'Benign']
-mal_flows = train_flows[train_flows.Attack != 'Benign']
-sample_i = np.random.choice(range(len(ben_flows)), size=10*len(mal_flows), 
-                            replace=False)
-train_flows = pd.concat([ben_flows.iloc[sample_i], mal_flows])
+# # 10:1 benign:malicious ratio in the dataset, sample all malicious flows and 10x benign flows for training
+# ben_flows = train_flows[train_flows.Attack == "Benign"]
+# mal_flows = train_flows[train_flows.Attack != "Benign"]
+# sample_i = np.random.choice(
+#     range(len(ben_flows)), size=10 * len(mal_flows), replace=False
+# )
+# train_flows = pd.concat([ben_flows.iloc[sample_i], mal_flows])
 
-print('Class distribution in sampled training set:', train_flows.Attack.value_counts())
-train_flows.to_csv('./interm/BotIoT_processed_train_sampled.csv', index=False)
+# print("Class distribution in sampled training set:", train_flows.Attack.value_counts())
+# train_flows.to_csv("./interm/BotIoT_processed_train_sampled.csv", index=False)
