@@ -20,7 +20,7 @@ EPOCHS = 30
 device = "cpu"
 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
-log("Loading data...", c='blue')
+log("Loading data...", c="blue")
 train_flows = pd.read_csv("interm/unsw_nb15_processed_train.csv")
 test_flows = pd.read_csv("interm/unsw_nb15_processed_test.csv")
 classes = list(np.unique(train_flows.Attack))
@@ -28,7 +28,7 @@ train_flows = train_flows[train_flows.Attack.isin(classes)]
 test_flows = test_flows[test_flows.Attack.isin(classes)]
 
 flows = pd.concat([train_flows, test_flows], ignore_index=True)
-log("Loaded", c='blue')
+log("Loaded", c="blue")
 
 le = LabelEncoder()
 le.fit(flows.Attack)
@@ -41,10 +41,10 @@ writer = SummaryWriter(log_dir=exp_dir)
 # ------------------- Ensemble -------------------
 
 for a in classes:
-    if a == "Benign" or a == "Analysis": # !! skipping analysis, too few samples
+    if a == "Benign" or a == "Analysis":  # !! skipping analysis, too few samples
         continue
 
-    log(f"Training binary classifier for {a}...", c='blue')
+    log(f"Training binary classifier for {a}...", c="blue")
 
     # binary classification for each class
     train_cp = train_flows.copy()
@@ -55,11 +55,10 @@ for a in classes:
     # only sample reasonable attack:benign ration from flows dataframe
     ben_flows = train_cp[train_cp.Attack == 0]
     mal_flows = train_cp[train_cp.Attack == 1]
-    sample_i = np.random.choice(range(len(ben_flows)), 
-                                size=200_000,  # !! 10% sampling
-                                replace=False)
+    sample_i = np.random.choice(
+        range(len(ben_flows)), size=200_000, replace=False  # !! 10% sampling
+    )
     train_cp = pd.concat([ben_flows.iloc[sample_i], mal_flows])
-
 
     debug(f"number of {a} flows: {sum(train_cp.Attack != 0)}")
     debug(f"number of Benign flows: {sum(train_cp.Attack == 0)}")
@@ -68,7 +67,7 @@ for a in classes:
         "in_channels": 72,
         "hidden_channels": 256,
         "out_channels": 2,
-        "num_layers": 2, 
+        "num_layers": 2,
     }
 
     model = GraphSAGE(**model_kwargs).to(device)
@@ -89,7 +88,7 @@ for a in classes:
     # ------------------ Training Loop ------------------
 
     for epc in range(1, EPOCHS + 1):
-        log(f' --- epoch: {epc}/{EPOCHS+1}', c='blue')
+        log(f" --- epoch: {epc}/{EPOCHS+1}", c="blue")
 
         # ---- Train ----
         model.train()
@@ -97,11 +96,13 @@ for a in classes:
         y_preds, y_trues = [], []
 
         for i, G in enumerate(yield_subgraphs(train_cp, window=WINDOW)):
-            debug(f'train windows completed procssing: {i}')
-            debug(f'Window G{i} edge index shape {G.edge_index.shape} x shape {G.x.shape}')
+            debug(f"train windows completed procssing: {i}")
+            debug(
+                f"Window G{i} edge index shape {G.edge_index.shape} x shape {G.x.shape}"
+            )
 
             optimizer.zero_grad()
-            y_train = G.x[:, -1].long() 
+            y_train = G.x[:, -1].long()
             x_train = G.x[:, :-1]
             out = model(x_train, G.edge_index)
 
@@ -119,8 +120,11 @@ for a in classes:
         # log class wise f1
         y_trues = torch.cat(y_trues).numpy()
         y_preds = torch.cat(y_preds).numpy()
-        log(f'train y_trues.shape, sum {y_trues.shape}, {y_trues.sum()} | y_preds.shape, sum {y_preds.shape},{y_preds.sum()}', c='green')
-        class_f1 = f1_score(y_trues, y_preds, average='binary')
+        log(
+            f"train y_trues.shape, sum {y_trues.shape}, {y_trues.sum()} | y_preds.shape, sum {y_preds.shape},{y_preds.sum()}",
+            c="green",
+        )
+        class_f1 = f1_score(y_trues, y_preds, average="binary")
         writer.add_scalar(f"F1/Train/{a}_f1", class_f1, epc)
 
         avg_train_loss = np.mean(train_losses)
@@ -147,7 +151,7 @@ for a in classes:
         # log class wise f1
         y_trues = torch.cat(y_trues).numpy()
         y_preds = torch.cat(y_preds).numpy()
-        class_f1 = f1_score(y_trues, y_preds, average='binary')
+        class_f1 = f1_score(y_trues, y_preds, average="binary")
         writer.add_scalar(f"F1/Test/{a}_f1", class_f1, epc)
 
         avg_test_loss = np.mean(test_losses)
@@ -164,8 +168,9 @@ for a in classes:
             f"{a} Train Loss: {avg_train_loss:.4f} | "
             f"{a} Test Loss: {avg_test_loss:.4f} | "
             f"{a} Train Acc: {avg_train_acc:.4f} | "
-            f"{a} Test Acc: {avg_test_acc:.4f}"
-        , c='green')
+            f"{a} Test Acc: {avg_test_acc:.4f}",
+            c="green",
+        )
 
         # Save best model
         if avg_test_loss < best_test_loss:

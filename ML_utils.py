@@ -18,8 +18,9 @@ DEBUG = 0
 init()  # colour logs
 device = "cpu"
 
+
 def debug(message, **kwargs):
-    log(message, **kwargs, debug=True, c='red')
+    log(message, **kwargs, debug=True, c="red")
 
 
 def log(message, c=None, debug=False, lstrip=False):
@@ -27,18 +28,17 @@ def log(message, c=None, debug=False, lstrip=False):
     reset = Style.RESET_ALL if c else ""
     if lstrip:
         new_message = ""
-        for line in message.split('\n'):
+        for line in message.split("\n"):
             if len(line.strip()) < 1:
-                continue 
-            new_message += line.lstrip() + '\n'
-        message = new_message[:-1] # remove last line break
+                continue
+            new_message += line.lstrip() + "\n"
+        message = new_message[:-1]  # remove last line break
 
     if not DEBUG and debug:
-        return # skip without debug option
-    
+        return  # skip without debug option
+
     debug_prefix = "DEBUG" if debug and DEBUG else ""
     print(f"{fore_col} > {debug_prefix} LOG: {message} {reset}", flush=True)
-
 
 
 def train_graph(model, train_graph, optimizer, loss_fn, y_train):
@@ -94,67 +94,117 @@ def epoch(
     return losses, sum(losses) / len(losses), ys, ypreds
 
 
-def yield_subgraphs(flows, window, target_col="Attack"):
+def yield_subgraphs(flows, window, target_col="Attack", linegraph=True):
     for start in range(0, len(flows) - 1, window):
         window_flows = flows.iloc[start : start + window].copy()
-        debug(f'window computed [{start}:{start+window}]. mal flows: {sum(window_flows.Attack)}')
+        debug(
+            f"window computed [{start}:{start+window}]. mal flows: {sum(window_flows.Attack)}"
+        )
         # y = deepcopy(window_flows.Attack.values)
         # window_flows.drop('Attack', axis=1, inplace=True)
         window_graph, _ = graph_encode(
             window_flows,
-            linegraph=True,
+            linegraph=linegraph,
             edge_cols=["src", "dst"],
             target_col=target_col,
         )
         yield window_graph
 
 
-def graph_encode(data, edge_cols: list, linegraph: bool, target_col: str = None):
-    """convert flows df to pyG graph with G.x[-1] as target"""
+# def graph_encode(data, edge_cols: list, linegraph: bool, target_col: str = None):
+#     """convert flows df to pyG graph with G.x[-1] as target"""
 
+#     assert target_col in data.columns
+#     cols = [c for c in data.columns if c != target_col] + [target_col]
+#     data = data[cols]
+
+#     attrs = [
+#         c
+#         for c in data.columns
+#         if c not in edge_cols
+#     ]
+
+#     x = data[attrs].to_numpy(dtype=np.float32)
+#     edge_attr = torch.tensor(x, dtype=torch.float)
+
+#     nodes = pd.concat([data["src"], data["dst"]]).unique()
+#     node_map = {n: i for i, n in enumerate(nodes)}
+
+#     src_name, dst_name = edge_cols
+#     src = data[src_name].map(node_map).to_numpy()
+#     dst = data[dst_name].map(node_map).to_numpy()
+
+#     edge_index = torch.tensor(np.stack([src, dst]), dtype=torch.long)
+
+#     G = Data(
+#         edge_index=edge_index,
+#         edge_attr=edge_attr,
+#         num_nodes=len(nodes),
+#     )
+
+#     # make bidirectional
+#     edge_index = G.edge_index
+#     edge_attr = G.edge_attr
+#     edge_index = torch.cat([edge_index, edge_index.flip(0)], dim=1)
+#     edge_attr = torch.cat([edge_attr, edge_attr], dim=0)
+#     G.edge_index = edge_index
+#     G.edge_attr = edge_attr
+
+#     if linegraph:
+#         G.x = G.edge_attr
+#         G = LineGraph()(G)
+
+#         # ensure linegraph is also birectional
+#         edge_index = G.edge_index
+#         edge_index = torch.cat([edge_index, edge_index.flip(0)], dim=1)
+#         G.edge_index = edge_index
+
+
+#     return G, node_map
+
+
+def graph_encode(data, edge_cols: list, linegraph: bool, target_col: str = None):
     assert target_col in data.columns
+    # keep label separate and explicit
+    labels = data[target_col].to_numpy(dtype=np.int64)  # shape (E,)
     cols = [c for c in data.columns if c != target_col] + [target_col]
     data = data[cols]
 
-    attrs = [
-        c
-        for c in data.columns
-        if c not in edge_cols 
-    ]
-
-    x = data[attrs].to_numpy(dtype=np.float32)
-    edge_attr = torch.tensor(x, dtype=torch.float)
+    # feature columns = all columns except edge_cols and target_col
+    feature_cols = [c for c in data.columns if c not in edge_cols + [target_col]]
+    edge_features = data[feature_cols].to_numpy(dtype=np.float32)  # (E, F)
+    edge_labels = torch.tensor(labels, dtype=torch.long)  # (E,)
 
     nodes = pd.concat([data["src"], data["dst"]]).unique()
     node_map = {n: i for i, n in enumerate(nodes)}
 
-    src_name, dst_name = edge_cols
-    src = data[src_name].map(node_map).to_numpy()
-    dst = data[dst_name].map(node_map).to_numpy()
-
-    edge_index = torch.tensor(np.stack([src, dst]), dtype=torch.long)
+    src = data[edge_cols[0]].map(node_map).to_numpy()
+    dst = data[edge_cols[1]].map(node_map).to_numpy()
+    edge_index = torch.tensor(np.stack([src, dst]), dtype=torch.long)  # (2, E)
 
     G = Data(
         edge_index=edge_index,
-        edge_attr=edge_attr,
+        edge_attr=torch.tensor(edge_features, dtype=torch.float),
         num_nodes=len(nodes),
     )
 
-    # make bidirectional
-    edge_index = G.edge_index
-    edge_attr = G.edge_attr
-    edge_index = torch.cat([edge_index, edge_index.flip(0)], dim=1)
-    edge_attr = torch.cat([edge_attr, edge_attr], dim=0)
-    G.edge_index = edge_index
-    G.edge_attr = edge_attr
-
     if linegraph:
+        # DO NOT make bidirectional yet; call LineGraph on the original directed edges
+        # LineGraph will create nodes representing each original edge in the same order,
+        # so edge_labels align with the new nodes.
         G = LineGraph()(G)
 
-        # ensure linegraph is also birectional
-        edge_index = G.edge_index
-        edge_index = torch.cat([edge_index, edge_index.flip(0)], dim=1)
-        G.edge_index = edge_index
+        # after LineGraph, G.x contains the edge_attr (node features for line-graph)
+        # and node-count equals original number of edges. Attach labels explicitly:
+        G.y = edge_labels.clone()  # shape matches G.x rows
 
+        # If you want undirected line-graph edges (bi-directional adjacency), do it now:
+        G.edge_index = torch.cat([G.edge_index, G.edge_index.flip(0)], dim=1)
+
+    else:
+        # For non-linegraph case you probably want node features; set them explicitly if needed
+        # e.g., create node features or put edge features somewhere else.
+
+        G.y = edge_labels.clone()
 
     return G, node_map

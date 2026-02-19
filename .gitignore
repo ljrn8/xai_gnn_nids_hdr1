@@ -1,4 +1,6 @@
 raw
+venv311
+venv*
 venv
 interm
 env

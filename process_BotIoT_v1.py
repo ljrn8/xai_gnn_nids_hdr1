@@ -3,26 +3,28 @@ import numpy as np
 from pathlib import Path
 from sklearn.preprocessing import StandardScaler, LabelEncoder
 
-root = Path('raw/de2c6f75dd50d933_MOHANAD_A4706/data/')
+root = Path("raw/de2c6f75dd50d933_MOHANAD_A4706/data/")
 flows = pd.read_csv(root / "NF-BoT-IoT.csv")
 features = pd.read_csv(root / "NetFlow_v1_Features.csv")
 
-flows['src'] = flows['IPV4_SRC_ADDR'].astype(str) + ':' + flows.L4_SRC_PORT.astype(str)
-flows['dst'] = flows['IPV4_DST_ADDR'].astype(str) + ':' + flows.L4_DST_PORT.astype(str)
-flows.drop(['Label', 'IPV4_DST_ADDR', 'IPV4_SRC_ADDR', 'L4_SRC_PORT', 'L4_DST_PORT'], axis=1, inplace=True)
+flows["src"] = flows["IPV4_SRC_ADDR"].astype(str) + ":" + flows.L4_SRC_PORT.astype(str)
+flows["dst"] = flows["IPV4_DST_ADDR"].astype(str) + ":" + flows.L4_DST_PORT.astype(str)
+flows.drop(
+    ["Label", "IPV4_DST_ADDR", "IPV4_SRC_ADDR", "L4_SRC_PORT", "L4_DST_PORT"],
+    axis=1,
+    inplace=True,
+)
 
-cateogrical = [
-    'PROTOCOL'
-]
+cateogrical = ["PROTOCOL"]
 
-numerical = [    
-    'TCP_FLAGS',
-    'L7_PROTO',
-    'IN_BYTES',
-    'OUT_BYTES',
-    'IN_PKTS',
-    'OUT_PKTS',
-    'FLOW_DURATION_MILLISECONDS',
+numerical = [
+    "TCP_FLAGS",
+    "L7_PROTO",
+    "IN_BYTES",
+    "OUT_BYTES",
+    "IN_PKTS",
+    "OUT_PKTS",
+    "FLOW_DURATION_MILLISECONDS",
 ]
 
 # clamping
@@ -48,7 +50,7 @@ le = LabelEncoder()
 flows[numerical] = ss.fit_transform(flows[numerical])
 
 # for c in cateogrical:
-    # flows[c] = le.fit_transform(flows[c])
+# flows[c] = le.fit_transform(flows[c])
 
 # OHE all categories
 flows = pd.get_dummies(flows, columns=cateogrical, drop_first=False)
