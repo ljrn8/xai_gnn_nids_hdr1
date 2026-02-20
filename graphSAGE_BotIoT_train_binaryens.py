@@ -36,7 +36,7 @@ def forward(flows, model, criterion, train=True):
 
     losses, y_trues, y_probs = [], [], []
     for i, G in enumerate(yield_subgraphs(flows, window=WINDOW)):
-        y = G.y.to(device)  # explicit label tensor
+        y = G.y.to(device).reshape(-1) # explicit label tensor
         x = G.x.to(device)
         out = model((x, G.edge_index.to(device)))
         loss = criterion(out, y)

@@ -20,14 +20,15 @@ EPOCHS = 15
 os.environ["LOGURU_LEVEL"] = "INFO" 
 device = "cpu"
 
-def get_metrcs(y_true, y_pred):
-    P, R = (precision_score(y_true, y_pred, pos_label=1),
-        recall_score(y_true, y_pred, pos_label=1))
-    return (
-         2 * P * R / (P + R), # f1
-         P,
-         R
+def get_metrcs(y_true, y_pred_probs):
+    y_pred = y_pred_probs > 0.5
+    P, R = (
+        precision_score(y_true, y_pred, pos_label=1),
+        recall_score(y_true, y_pred, pos_label=1),
     )
+    return (roc_auc_score(y_true, y_pred_probs), 
+            2 * P * R / (P + R),  # f1
+            P, R)  
 
 # ------------- script -------------
 
@@ -55,8 +56,9 @@ writer = SummaryWriter(log_dir=exp_dir)
 
 logger.info(f'class distribution: {np.unique(train_flows.Attack, return_counts=True)}')
 features = list(flows.columns)
-features.remove('src', 'dst', 'Attack')
-
+print(features)
+[features.remove(s) for s in ['src', 'dst', 'Attack']]
+logger.info(f'features: [{len(features)}] {features}')
 model_kwargs = {
     'hidden_channels':[256, 256],
     'num_features':len(features)
@@ -70,8 +72,8 @@ test_flows.Attack = torch.Tensor(test_flows['Attack'] != 'Benign').float()
 
 logger.info(f'TRAIN: ben: {len(train_flows.Attack ) - sum(train_flows.Attack )}, mal sum {sum(train_flows.Attack )}, mal perc: {np.mean(train_flows.Attack )}')
 logger.info(f'TEST: ben: {len(test_flows.Attack) - sum(test_flows.Attack)}, mal sum {sum(test_flows.Attack)}, mal perc: {np.mean(test_flows.Attack)}')
-test_flows.Attack
-criterion = torch.nn.BCELoss(weight=torch.Tensor(np.mean(train_flows.Attack)).float())
+criterion = torch.nn.BCEWithLogitsLoss(
+    pos_weight=torch.LongTensor([train_flows.Attack.mean()] ))
 optimizer = torch.optim.Adam(model.parameters(), lr=LR)
 
 best_test_loss = float('inf')
@@ -91,7 +93,7 @@ for epc in range(1, EPOCHS-1):
     writer.add_scalar(f"AUC/Train/auc", auc, epc)
     writer.add_scalar(f"REC/Train/rec", rec, epc)
     writer.add_scalar(f"PREC/Train/prec", prec, epc)
-    writer.add_scalar(f"Loss/Train/loss", avg_loss, epc)
+    writer.add_scalar(f"Loss/Train/loss", avg_loss, epc) 
     writer.add_scalar(
         f"PosRate/Train/PosRate", np.sum(np.mean(y_probs > 0.5)), epc
     )
