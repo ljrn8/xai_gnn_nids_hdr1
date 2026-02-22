@@ -15,8 +15,8 @@ from loguru import logger
 from EGraphSAGE import EGraphSAGE
 
 WINDOW = 10_000
-LR = 0.0005
-EPOCHS = 100
+LR = 0.001
+EPOCHS = 20
 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 RUN_ID = f'EGraphSAGE_anomdetection_UNSW_graphsage_{timestamp}'
 
@@ -44,10 +44,11 @@ def get_metrics(y_true, y_pred_probs):
 
 # ------------- script -------------
 
+
 # load processed flows
 logger.info("Loading data...", c="blue")
 train_flows = pd.read_csv("interm/unsw_nb15_processed_train.csv")
-test_flows = pd.read_csv("interm/unsw_nb15_processed_test.csv")
+test_flows = pd.read_csv("interm/unsw_nb15_processed_train.csv")
 
 classes = list(np.unique(train_flows.Attack))
 flows = pd.concat([train_flows, test_flows], ignore_index=True)
@@ -65,16 +66,6 @@ log_dir.touch()
 logger.add(log_dir)
 writer = SummaryWriter(log_dir=exp_dir)
 
-# convert train_flows to 10:1 benign:attack ratio
-ben_flows = train_flows[train_flows.Attack == 'Benign']
-mal_flows = train_flows[train_flows.Attack != 'Benign']
-ben_index = np.arange(len(ben_flows))
-sample_index = np.random.choice(ben_index, replace=False, size=len(mal_flows)*10)
-train_flows = pd.concat((mal_flows, ben_flows.iloc[sample_index]))
-# resort afterwords
-train_flows = train_flows.sort_values(by="FLOW_START_MILLISECONDS")
-
-logger.info(f'train mal:ben = {sum(train_flows.Attack == "Benign")}:{sum(train_flows.Attack != "Benign")}')
 logger.info(f"class distribution: {np.unique(train_flows.Attack, return_counts=True)}")
 features = list(flows.columns)
 print(features)
@@ -99,8 +90,8 @@ logger.info(
 logger.info(
     f"TEST: ben: {len(test_flows.Attack) - sum(test_flows.Attack)}, mal sum {sum(test_flows.Attack)}, mal perc: {np.mean(test_flows.Attack)}"
 )
-# w = float((train_flows.Attack == 0).sum() / train_flows.Attack.sum())
-criterion = torch.nn.BCEWithLogitsLoss()
+w = float(train_flows.Attack.mean())
+criterion = torch.nn.BCEWithLogitsLoss(pos_weight=torch.Tensor([w]).to(device))
 
 optimizer = torch.optim.Adam(model.parameters(), lr=LR)
 best_test_auc = 0.0
@@ -108,7 +99,6 @@ best_test_auc = 0.0
 for epc in range(1, EPOCHS - 1):
 
     # ----- train
-    model.train()
     avg_loss, y_trues, y_probs, embeddings = model.train_flows(
         train_flows, criterion=criterion, optimizer=optimizer, window=WINDOW, train=True
     )
@@ -120,16 +110,13 @@ for epc in range(1, EPOCHS - 1):
     writer.add_scalar(f"REC/Train/rec", rec, epc)
     writer.add_scalar(f"PREC/Train/prec", prec, epc)
     writer.add_scalar(f"Loss/Train/loss", avg_loss, epc)
-    writer.add_scalar(f"PosRate/Train/MeanProb", np.mean(y_probs), epc)
+    writer.add_scalar(f"PosRate/Train/MeanProb", np.mean(y_probs > 0.5), epc)
     writer.add_histogram(f"Probs/Train/probs_hist", y_probs, epc)
 
-    # ---- test
-    model.eval()
-    with torch.no_grad():
-        test_avg_loss, y_trues, y_probs, embeddings = model.train_flows(
-            test_flows, criterion=criterion, optimizer=optimizer,
-            window=WINDOW, train=False
-        )
+    test_avg_loss, y_trues, y_probs, embeddings = model.train_flows(
+        test_flows, criterion=criterion, optimizer=optimizer,
+        window=WINDOW, train=False
+    )
     pr_auc, roc_auc, f1, prec, rec = get_metrics(y_trues, y_probs)
     writer.add_scalar(f"F1/Test/f1", f1, epc)
     writer.add_scalar(f"AUC/Test/pr_auc", pr_auc, epc)
@@ -148,7 +135,7 @@ for epc in range(1, EPOCHS - 1):
         f"Test ROC AUC: {roc_auc:.4f} | "
     )
 
-    # Save best model only (using TEST PR AUC)
+    # # Save best model only (using PR AUC)
     # if pr_auc > best_test_auc:
     #     best_test_auc = pr_auc
     #     torch.save(model.state_dict(), exp_dir / f"best_model.pt")

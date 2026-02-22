@@ -75,12 +75,12 @@ class EGraphSAGE(nn.Module):
         - expects Attack to 0 (ben) and 1 (mal) for training
         - criterion must work on sigmoid probabilities (binary)
         """
-        losses, y_trues, y_probs = [], [], []
+        losses, y_trues, y_probs, embeddings = [], [], [], []
         for i, G in enumerate(yield_subgraphs(flows, window, linegraph=False)):
             if train:
                 optimizer.zero_grad()
 
-            logits, embeddings = self.forward(
+            logits, emb = self.forward(
                 G.edge_attr, G.edge_index, num_nodes=G.num_nodes
             )
             probs = torch.sigmoid(logits)
@@ -102,6 +102,7 @@ class EGraphSAGE(nn.Module):
             losses.append(loss.item())
             y_trues.append(y)
             y_probs.append(probs)
+            embeddings.append(emb)
             del G
 
         y_trues = torch.cat(y_trues).cpu().detach().numpy()

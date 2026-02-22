@@ -16,8 +16,8 @@ import sys
 # ---------------- CONFIG ----------------
 device = "cpu"
 exp_dir: Path = Path(sys.argv[1])
+test_csv: Path = Path(sys.argv[2])
 print(exp_dir)
-test_csv = "interm/BotIoT_v1_processed_test.csv"
 figure = Path('figures') / exp_dir.name
 figure.mkdir(exist_ok=True)
 # ----------------------------------------
