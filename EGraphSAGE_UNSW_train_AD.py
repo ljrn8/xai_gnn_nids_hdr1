@@ -30,7 +30,9 @@ def get_metrics(y_true, y_pred_probs):
         precision_score(y_true, y_pred, pos_label=1),
         recall_score(y_true, y_pred, pos_label=1),
     )
-    precision, recall, _ = precision_recall_curve(y_true, y_pred_probs)
+    precision, recall, _ = precision_recall_curve(y_true, 
+                                                  y_pred_probs, 
+                                                  pos_label=1)
     pr_auc = auc(recall, precision)
     F1 = 2 * P * R / (P + R) if P + R > 0 else 0.0
     return (
@@ -40,6 +42,23 @@ def get_metrics(y_true, y_pred_probs):
         P, 
         R
     ) 
+
+
+def write_metrics(y_trues, y_probs, writer, epc, train_category: bool):
+    all_metrics = get_metrics(y_trues, y_probs)
+    pr_auc, roc_auc, f1, prec, rec = all_metrics
+    metrics = {
+        'PR-AUC': pr_auc, 'ROC-AUC': roc_auc, 
+        'F1': f1, 'PREC': prec, 'rec': rec
+    }
+    istrain = 'TRAIN' if train_category else 'TEST'
+    for metric_name, metric in metrics.items():
+        writer.add_scalar(
+            f"{metric_name}/{istrain}/{metric_name.lower()}", 
+            metric, epc
+        )
+    return all_metrics
+
 
 
 # ------------- script -------------
@@ -90,9 +109,8 @@ logger.info(model)
 
 # re encode attack for anomoly detection
 train_attack_classes, test_attack_classes = train_flows.Attack, test_flows.Attack
-train_flows.Attack = torch.Tensor(train_flows["Attack"] != "Benign").float()
-test_flows.Attack = torch.Tensor(test_flows["Attack"] != "Benign").float()
-
+train_flows.Attack = torch.Tensor((train_flows["Attack"] != "Benign").astype(float).values).float()
+test_flows.Attack = torch.Tensor((test_flows["Attack"] != "Benign").astype(float).values).float()
 logger.info(
     f"TRAIN: ben: {len(train_flows.Attack ) - sum(train_flows.Attack)}, mal sum {sum(train_flows.Attack )}, mal perc: {np.mean(train_flows.Attack )}"
 )
@@ -105,41 +123,40 @@ criterion = torch.nn.BCEWithLogitsLoss()
 optimizer = torch.optim.Adam(model.parameters(), lr=LR)
 best_test_auc = 0.0
 
+# ----------------------------------------------------------------
+# ----------------------- TRAINING LOOP --------------------------
 for epc in range(1, EPOCHS - 1):
 
-    # ----- train
+    # ----- TRAIN -----
     model.train()
     avg_loss, y_trues, y_probs, embeddings = model.train_flows(
-        train_flows, criterion=criterion, optimizer=optimizer, window=WINDOW, train=True
+        train_flows, criterion=criterion, optimizer=optimizer, 
+        window=WINDOW, train=True
     )
-    pr_auc, roc_auc, f1, prec, rec = get_metrics(y_trues, y_probs)
-    writer.add_scalar(f"F1/Train/f1", f1, epc)
-    writer.add_scalar(f"AUC/Train/pr_auc", pr_auc, epc)
-    writer.add_scalar(f"AUC/Train/roc_auc", roc_auc, epc)
-
-    writer.add_scalar(f"REC/Train/rec", rec, epc)
-    writer.add_scalar(f"PREC/Train/prec", prec, epc)
-    writer.add_scalar(f"Loss/Train/loss", avg_loss, epc)
+    pr_auc, roc_auc, f1, prec, rec = write_metrics(
+        y_trues, y_probs,  
+        writer, epc, train_category=True
+    )
     writer.add_scalar(f"PosRate/Train/MeanProb", np.mean(y_probs), epc)
     writer.add_histogram(f"Probs/Train/probs_hist", y_probs, epc)
 
-    # ---- test
+    # ---- TEST -----
     model.eval()
     with torch.no_grad():
         test_avg_loss, y_trues, y_probs, embeddings = model.train_flows(
-            test_flows, criterion=criterion, optimizer=optimizer,
+            test_flows, 
+            criterion=criterion,
+            optimizer=None,
             window=WINDOW, train=False
         )
-    pr_auc, roc_auc, f1, prec, rec = get_metrics(y_trues, y_probs)
-    writer.add_scalar(f"F1/Test/f1", f1, epc)
-    writer.add_scalar(f"AUC/Test/pr_auc", pr_auc, epc)
-    writer.add_scalar(f"AUC/Test/roc_auc", roc_auc, epc)
+        pr_auc, roc_auc, f1, prec, rec = write_metrics(
+            y_trues, y_probs,  
+            writer, epc, train_category=False
+        )
+        writer.add_scalar(f"PosRate/Test/MeanProb", np.mean(y_probs), epc)
+        writer.add_histogram(f"Probs/Test/probs_hist", y_probs, epc)
 
-    writer.add_scalar(f"REC/Test/rec", rec, epc)
-    writer.add_scalar(f"PREC/Test/prec", prec, epc)
-    writer.add_scalar(f"Loss/Test/loss", test_avg_loss, epc)
-    writer.add_scalar(f"PosRate/Test/MeanProb", np.mean(y_probs), epc)
-    writer.add_histogram(f"Probs/Test/probs_hist", y_probs, epc)
+
     logger.info(
         f"Epoch {epc:02d} | "
         f"Train Loss: {avg_loss:.4f} | "
@@ -155,6 +172,10 @@ for epc in range(1, EPOCHS - 1):
 
     # save current model (warning: may overfit)
     torch.save(model.state_dict(), exp_dir / f"best_model.pt")
+
+    # also try saving ws pickle (weight issue with custom model?)
+    with open(exp_dir / "best_model.pkl", "wb") as f:
+        pickle.dump(model, f)
 
     # ------------------ Metadata ------------------
     experiment_summary = {

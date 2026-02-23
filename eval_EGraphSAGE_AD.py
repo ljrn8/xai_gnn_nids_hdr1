@@ -1,17 +1,41 @@
 import pickle
+from xml.parsers.expat import model
 import torch
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from pathlib import Path
 from sklearn.metrics import (
+    auc,
     roc_auc_score,
+    precision_score,
+    recall_score,
     roc_curve,
     precision_recall_curve,
     classification_report,
 )
 from EGraphSAGE import EGraphSAGE
 import sys
+
+def get_metrics(y_true, y_pred_probs):
+    y_pred = y_pred_probs > 0.5
+    P, R = (
+        precision_score(y_true, y_pred, pos_label=1),
+        recall_score(y_true, y_pred, pos_label=1),
+    )
+    precision, recall, _ = precision_recall_curve(y_true, 
+                                                  y_pred_probs, 
+                                                  pos_label=1)
+    pr_auc = auc(recall, precision)
+    F1 = 2 * P * R / (P + R) if P + R > 0 else 0.0
+    return (
+        pr_auc,
+        roc_auc_score(y_true, y_pred_probs), 
+        F1, 
+        P, 
+        R
+    ) 
+
 
 # ---------------- CONFIG ----------------
 device = "cpu"
@@ -30,8 +54,10 @@ model_kwargs = cfg["model_kwargs"]
 WINDOW = cfg["window_size"]
 
 # ---------- Rebuild model ----------
-model = EGraphSAGE(**model_kwargs)
-model.load_state_dict(torch.load(exp_dir / "best_model.pt", map_location=device))
+# model = EGraphSAGE(**model_kwargs)
+# model.load_state_dict(torch.load(exp_dir / "best_model.pt", map_location=device))
+with open(exp_dir / "best_model.pkl", "rb") as f:
+    model = pickle.load(f)
 model.to(device)
 model.eval()
 
@@ -40,7 +66,7 @@ test_flows = pd.read_csv(test_csv)
 attack_labels = test_flows["Attack"].values  # original string labels
 
 # Binary encoding (same logic as training)
-test_flows["Attack"] = (test_flows["Attack"] != "Benign").astype(float)
+test_flows["Attack"] = torch.Tensor((test_flows["Attack"] != "Benign").astype(float)).float()
 
 # Dummy criterion (not used in eval)
 criterion = torch.nn.BCEWithLogitsLoss()
@@ -57,6 +83,16 @@ with torch.no_grad():
 
 y_true_bin = np.array(y_true_bin)
 y_probs = np.array(y_probs)
+print(f'y_probs values counts: {np.bincount((y_probs > 0.5).astype(int))}')
+print(f'start of y_probs: {y_probs[:10]}')
+
+# histogram of predicted probabilities
+plt.figure()
+plt.hist(y_probs, bins=50)
+plt.title("Prediction Probability Distribution")
+plt.show()
+plt.clf()
+
 y_pred_bin = (y_probs > 0.5).astype(int)
 
 # ============================================================
@@ -64,6 +100,7 @@ y_pred_bin = (y_probs > 0.5).astype(int)
 # ============================================================
 
 print("\n===== BINARY (Benign vs Malicious) =====")
+print(f'results from previous function in the order of (PR-AUC, ROC-AUC, F1, Precision, Recall) : {get_metrics(y_true_bin, y_probs)}')
 print("ROC AUC:", roc_auc_score(y_true_bin, y_probs))
 print(classification_report(y_true_bin, y_pred_bin, digits=4))
 
