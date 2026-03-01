@@ -18,11 +18,12 @@ WINDOW = 10_000
 LR = 0.0005
 EPOCHS = 100
 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-RUN_ID = f'EGraphSAGE_anomdetection_UNSW_graphsage_{timestamp}'
+RUN_ID = f"EGraphSAGE_anomdetection_UNSW_graphsage_{timestamp}"
 
 
 os.environ["LOGURU_LEVEL"] = "INFO"
 device = "cpu"
+
 
 def get_metrics(y_true, y_pred_probs):
     y_pred = y_pred_probs > 0.5
@@ -30,35 +31,20 @@ def get_metrics(y_true, y_pred_probs):
         precision_score(y_true, y_pred, pos_label=1),
         recall_score(y_true, y_pred, pos_label=1),
     )
-    precision, recall, _ = precision_recall_curve(y_true, 
-                                                  y_pred_probs, 
-                                                  pos_label=1)
+    precision, recall, _ = precision_recall_curve(y_true, y_pred_probs, pos_label=1)
     pr_auc = auc(recall, precision)
     F1 = 2 * P * R / (P + R) if P + R > 0 else 0.0
-    return (
-        pr_auc,
-        roc_auc_score(y_true, y_pred_probs), 
-        F1, 
-        P, 
-        R
-    ) 
+    return (pr_auc, roc_auc_score(y_true, y_pred_probs), F1, P, R)
 
 
 def write_metrics(y_trues, y_probs, writer, epc, train_category: bool):
     all_metrics = get_metrics(y_trues, y_probs)
     pr_auc, roc_auc, f1, prec, rec = all_metrics
-    metrics = {
-        'PR-AUC': pr_auc, 'ROC-AUC': roc_auc, 
-        'F1': f1, 'PREC': prec, 'rec': rec
-    }
-    istrain = 'TRAIN' if train_category else 'TEST'
+    metrics = {"PR-AUC": pr_auc, "ROC-AUC": roc_auc, "F1": f1, "PREC": prec, "rec": rec}
+    istrain = "TRAIN" if train_category else "TEST"
     for metric_name, metric in metrics.items():
-        writer.add_scalar(
-            f"{metric_name}/{istrain}/{metric_name.lower()}", 
-            metric, epc
-        )
+        writer.add_scalar(f"{metric_name}/{istrain}/{metric_name.lower()}", metric, epc)
     return all_metrics
-
 
 
 # ------------- script -------------
@@ -85,15 +71,17 @@ logger.add(log_dir)
 writer = SummaryWriter(log_dir=exp_dir)
 
 # convert train_flows to 10:1 benign:attack ratio
-ben_flows = train_flows[train_flows.Attack == 'Benign']
-mal_flows = train_flows[train_flows.Attack != 'Benign']
+ben_flows = train_flows[train_flows.Attack == "Benign"]
+mal_flows = train_flows[train_flows.Attack != "Benign"]
 ben_index = np.arange(len(ben_flows))
-sample_index = np.random.choice(ben_index, replace=False, size=len(mal_flows)*10)
+sample_index = np.random.choice(ben_index, replace=False, size=len(mal_flows) * 10)
 train_flows = pd.concat((mal_flows, ben_flows.iloc[sample_index]))
 # resort afterwords
 train_flows = train_flows.sort_values(by="FLOW_START_MILLISECONDS")
 
-logger.info(f'train mal:ben = {sum(train_flows.Attack == "Benign")}:{sum(train_flows.Attack != "Benign")}')
+logger.info(
+    f'train mal:ben = {sum(train_flows.Attack == "Benign")}:{sum(train_flows.Attack != "Benign")}'
+)
 logger.info(f"class distribution: {np.unique(train_flows.Attack, return_counts=True)}")
 features = list(flows.columns)
 print(features)
@@ -109,8 +97,12 @@ logger.info(model)
 
 # re encode attack for anomoly detection
 train_attack_classes, test_attack_classes = train_flows.Attack, test_flows.Attack
-train_flows.Attack = torch.Tensor((train_flows["Attack"] != "Benign").astype(float).values).float()
-test_flows.Attack = torch.Tensor((test_flows["Attack"] != "Benign").astype(float).values).float()
+train_flows.Attack = torch.Tensor(
+    (train_flows["Attack"] != "Benign").astype(float).values
+).float()
+test_flows.Attack = torch.Tensor(
+    (test_flows["Attack"] != "Benign").astype(float).values
+).float()
 logger.info(
     f"TRAIN: ben: {len(train_flows.Attack ) - sum(train_flows.Attack)}, mal sum {sum(train_flows.Attack )}, mal perc: {np.mean(train_flows.Attack )}"
 )
@@ -130,12 +122,10 @@ for epc in range(1, EPOCHS - 1):
     # ----- TRAIN -----
     model.train()
     avg_loss, y_trues, y_probs, embeddings = model.train_flows(
-        train_flows, criterion=criterion, optimizer=optimizer, 
-        window=WINDOW, train=True
+        train_flows, criterion=criterion, optimizer=optimizer, window=WINDOW, train=True
     )
     pr_auc, roc_auc, f1, prec, rec = write_metrics(
-        y_trues, y_probs,  
-        writer, epc, train_category=True
+        y_trues, y_probs, writer, epc, train_category=True
     )
     writer.add_scalar(f"PosRate/Train/MeanProb", np.mean(y_probs), epc)
     writer.add_histogram(f"Probs/Train/probs_hist", y_probs, epc)
@@ -144,18 +134,13 @@ for epc in range(1, EPOCHS - 1):
     model.eval()
     with torch.no_grad():
         test_avg_loss, y_trues, y_probs, embeddings = model.train_flows(
-            test_flows, 
-            criterion=criterion,
-            optimizer=None,
-            window=WINDOW, train=False
+            test_flows, criterion=criterion, optimizer=None, window=WINDOW, train=False
         )
         pr_auc, roc_auc, f1, prec, rec = write_metrics(
-            y_trues, y_probs,  
-            writer, epc, train_category=False
+            y_trues, y_probs, writer, epc, train_category=False
         )
         writer.add_scalar(f"PosRate/Test/MeanProb", np.mean(y_probs), epc)
         writer.add_histogram(f"Probs/Test/probs_hist", y_probs, epc)
-
 
     logger.info(
         f"Epoch {epc:02d} | "

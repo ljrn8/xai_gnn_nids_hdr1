@@ -17,61 +17,73 @@ from sklearn.metrics import (
 from EGraphSAGE import EGraphSAGE
 import sys
 
+THRESH = 0.1
+print('!!! Using threshold:', THRESH)
+
 def get_metrics(y_true, y_pred_probs):
-    y_pred = y_pred_probs > 0.5
+    y_pred = y_pred_probs > THRESH
     P, R = (
         precision_score(y_true, y_pred, pos_label=1),
         recall_score(y_true, y_pred, pos_label=1),
     )
-    precision, recall, _ = precision_recall_curve(y_true, 
-                                                  y_pred_probs, 
-                                                  pos_label=1)
+    precision, recall, _ = precision_recall_curve(y_true, y_pred_probs, pos_label=1)
     pr_auc = auc(recall, precision)
     F1 = 2 * P * R / (P + R) if P + R > 0 else 0.0
-    return (
-        pr_auc,
-        roc_auc_score(y_true, y_pred_probs), 
-        F1, 
-        P, 
-        R
-    ) 
+    return (pr_auc, roc_auc_score(y_true, y_pred_probs), F1, P, R)
 
 
-# ---------------- CONFIG ----------------
+# ---------------- SETUP ----------------
+
 device = "cpu"
 exp_dir: Path = Path(sys.argv[1])
 test_csv: Path = Path(sys.argv[2])
-print(exp_dir)
-figure = Path('figures') / exp_dir.name
-figure.mkdir(exist_ok=True)
-# ----------------------------------------
+if exp_dir == Path("newest"):
+    exp_dirs = sorted(
+        Path("interm/runs").glob("*_*"),
+        key=lambda p: (
+            int(p.name.split("_")[-1]) + int(p.name.split("_")[-2]) * 1000000 
+            if len(p.name.split("_")) >= 2 else 0
+        ),
+        reverse=True,
+    )
+    if not exp_dirs:
+        raise ValueError("No experiment directories found in 'interm/runs/'")
+    
+    exp_dir = exp_dirs[0]
+    print(f"Using newest experiment directory: {exp_dir}")
 
-# ---------- Load experiment metadata ----------
+print(f"Experiment directory: {exp_dir}")
+figure = Path("figures") / exp_dir.name
+figure.mkdir(exist_ok=True)
+
+# Load experiment metadata
 with open(exp_dir / "experiment.pkl", "rb") as f:
     cfg = pickle.load(f)
 
 model_kwargs = cfg["model_kwargs"]
 WINDOW = cfg["window_size"]
 
-# ---------- Rebuild model ----------
-# model = EGraphSAGE(**model_kwargs)
-# model.load_state_dict(torch.load(exp_dir / "best_model.pt", map_location=device))
+# Rebuild model
 with open(exp_dir / "best_model.pkl", "rb") as f:
     model = pickle.load(f)
 model.to(device)
 model.eval()
 
-# ---------- Load test data ----------
+# Load test data
+print(f"Loading test data from: {test_csv}")
 test_flows = pd.read_csv(test_csv)
 attack_labels = test_flows["Attack"].values  # original string labels
 
 # Binary encoding (same logic as training)
-test_flows["Attack"] = torch.Tensor((test_flows["Attack"] != "Benign").astype(float)).float()
+test_flows["Attack"] = torch.Tensor(
+    (test_flows["Attack"] != "Benign").astype(float)
+).float()
 
 # Dummy criterion (not used in eval)
 criterion = torch.nn.BCEWithLogitsLoss()
 
-# ---------- Run model ----------
+# --------------- EVAL ---------------
+
 with torch.no_grad():
     _, y_true_bin, y_probs, _ = model.train_flows(
         test_flows,
@@ -83,8 +95,8 @@ with torch.no_grad():
 
 y_true_bin = np.array(y_true_bin)
 y_probs = np.array(y_probs)
-print(f'y_probs values counts: {np.bincount((y_probs > 0.5).astype(int))}')
-print(f'start of y_probs: {y_probs[:10]}')
+print(f"y_probs values counts: {np.bincount((y_probs > THRESH).astype(int))}")
+print(f"start of y_probs: {y_probs[:10]}")
 
 # histogram of predicted probabilities
 plt.figure()
@@ -93,14 +105,14 @@ plt.title("Prediction Probability Distribution")
 plt.show()
 plt.clf()
 
-y_pred_bin = (y_probs > 0.5).astype(int)
+y_pred_bin = (y_probs > THRESH).astype(int)
 
-# ============================================================
-# -------------------- 1. Binary Evaluation ------------------
-# ============================================================
 
+# 1. Binary Evaluation
 print("\n===== BINARY (Benign vs Malicious) =====")
-print(f'results from previous function in the order of (PR-AUC, ROC-AUC, F1, Precision, Recall) : {get_metrics(y_true_bin, y_probs)}')
+print(
+    f"results from previous function in the order of (PR-AUC, ROC-AUC, F1, Precision, Recall) : {get_metrics(y_true_bin, y_probs)}"
+)
 print("ROC AUC:", roc_auc_score(y_true_bin, y_probs))
 print(classification_report(y_true_bin, y_pred_bin, digits=4))
 
@@ -112,7 +124,7 @@ plt.title("ROC Curve (Binary)")
 plt.xlabel("FPR")
 plt.ylabel("TPR")
 plt.grid()
-plt.savefig(figure / 'ROC Curve (Binary).png')
+plt.savefig(figure / "ROC Curve (Binary).png")
 plt.clf()
 
 # PR
@@ -123,7 +135,7 @@ plt.title("PR Curve (Binary)")
 plt.xlabel("Recall")
 plt.ylabel("Precision")
 plt.grid()
-plt.savefig(figure / 'PR Curve (Binary).png')
+plt.savefig(figure / "PR Curve (Binary).png")
 plt.clf()
 
 # Histogram
@@ -132,14 +144,11 @@ plt.hist(y_probs, bins=50)
 plt.title("Prediction Probability Distribution")
 plt.xlabel("Predicted Probability")
 plt.ylabel("Count")
-plt.savefig(figure / 'Prediction Probability Distribution.png')
+plt.savefig(figure / "Prediction Probability Distribution.png")
 plt.clf()
 
 
-# ============================================================
-# ------------- 2. Per-Attack One-vs-Benign ------------------
-# ============================================================
-
+# 2. Per-Attack One-vs-Benign
 print("\n===== PER ATTACK TYPE (Benign vs Attack X) =====")
 
 unique_attacks = np.unique(attack_labels)
@@ -152,7 +161,7 @@ for attack in unique_attacks:
 
     y_true_attack = (attack_labels[mask] == attack).astype(int)
     y_probs_attack = y_probs[mask]
-    y_pred_attack = (y_probs_attack > 0.5).astype(int)
+    y_pred_attack = (y_probs_attack > THRESH).astype(int)
 
     if len(np.unique(y_true_attack)) < 2:
         print("Skipping (only one class present)")

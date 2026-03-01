@@ -10,40 +10,26 @@ class EGraphSAGE(nn.Module):
     """for binary classification"""
 
     def __init__(self, hidden_channels: list, num_features):
+        super(EGraphSAGE, self).__init__()
         self.hidden_channels = hidden_channels
         self.num_layers = len(hidden_channels)
         self.num_features = num_features
         self.channels = [num_features] + hidden_channels
-        self.layers = []
+        self.layers = nn.ModuleList()
+
+        # add E-SAGE layers
         for i in range(len(self.channels) - 1):
             self.layers.append(
                 EdgeSAGELayer(
                     in_channels=self.channels[i], out_channels=self.channels[i + 1]
                 )
             )
-        self.layers.append(nn.Linear(self.channels[-1], 1))  # binary for now
-        super().__init__()
 
-    def __str__(self):
-        print('---- model summary ----')
-        for layer in self.layers:
-            print(layer)
-        return super().__str__()
-
-    def parameters(self):
-        """for optimizer, returns iterator over param list"""
-        sage_layers = self.layers[:-1]
-        linear_layer = self.layers[-1]
-        params = [sage.W.weight for sage in sage_layers] + [linear_layer.weight]
-        return params
+        # add final binary linear layer
+        self.layers.append(nn.Linear(self.channels[-1], 1))  
 
     def forward(self, edge_attr, edge_index, num_nodes):
-        """Node attr should be all 1s"""
         for i, channel in enumerate(self.channels):
-            # features
-            if i == 0:
-                continue
-
             # ends with linear
             if i == len(self.channels) - 1:
                 embeddings = edge_attr.clone().detach()
@@ -52,11 +38,11 @@ class EGraphSAGE(nn.Module):
 
             # SAGE
             else:
-                SAGE_layer = self.layers[i-1] # starts with SAGE
+                SAGE_layer = self.layers[i]  # starts with SAGE
                 edge_attr = SAGE_layer(
                     edge_attr,
                     edge_index,
-                    node_attr=torch.ones([num_nodes, self.channels[i - 1]]),
+                    node_attr=torch.ones([num_nodes, channel]),
                 )
 
         return edge_attr.view(-1), embeddings
@@ -80,9 +66,7 @@ class EGraphSAGE(nn.Module):
             if train:
                 optimizer.zero_grad()
 
-            logits, emb = self.forward(
-                G.edge_attr, G.edge_index, num_nodes=G.num_nodes
-            )
+            logits, emb = self.forward(G.edge_attr, G.edge_index, num_nodes=G.num_nodes)
             probs = torch.sigmoid(logits)
             y = G.y.to(device).float()
             loss = criterion(logits, y)
@@ -91,8 +75,9 @@ class EGraphSAGE(nn.Module):
                 logger.debug(
                     f"WINDOW index={i}: edge index shape {G.edge_index.shape} edge_attr shape {G.edge_attr.shape}"
                 )
-                logger.debug(f"probs.shape = {probs.shape}")
-                logger.debug(f"y shape = {y.shape}")
+                # logger.debug(f"probs.shape = {probs.shape}")
+                # logger.debug(f"y_probs unique = {np.unique(probs, return_counts=True)}")
+                logger.debug(f"y shape = {y.size()}")
                 logger.debug(f"y unique = {np.unique(y, return_counts=True)}")
 
             if train:
@@ -109,7 +94,7 @@ class EGraphSAGE(nn.Module):
         y_probs = torch.cat(y_probs).cpu().detach().numpy()
         avg_loss = np.mean(losses)
         logger.debug(
-            f"BATCH COMPLETE: train y_trues.shape, sum {y_trues.shape}" 
+            f"BATCH COMPLETE: train y_trues.shape, sum {y_trues.shape}"
             f"{y_trues.sum()} | y_preds.shape, sum {y_probs.shape}, {y_probs.sum()}"
         )
         return (avg_loss, y_trues, y_probs, embeddings)
@@ -120,18 +105,17 @@ class EdgeSAGELayer(nn.Module):
         super().__init__()
         self.W = nn.Linear(in_channels, out_channels)
 
-    def forward(self, edge_attr, edge_index, node_attr):
+    def forward(self, edge_attr, edge_index, 
+                node_attr, edge_weights=None):
+        
         # edge_attr: (E, F)
         # edge_index: (2, E)
+        if edge_weights is None:
+            edge_weights = torch.ones(edge_index.shape[1])
+        assert edge_weights.shape[0] == edge_index.shape[1]
+
         num_nodes = edge_index.max().item() + 1
         src, dst = edge_index
-
-        assert (
-            edge_attr.shape[0] > edge_attr.shape[1]
-        ), f"unexpected shape {edge_attr.shape}"
-        assert (
-            edge_index.shape[0] < edge_index.shape[1]
-        ), f"unexpected shape {edge_index.shape}"
 
         target_indices = edge_index[0, :].reshape(-1)
         edge_aggregated_mean = scatter_mean(
@@ -142,6 +126,6 @@ class EdgeSAGELayer(nn.Module):
         node_embeddings = torch.sigmoid(self.W(mean_sum_embedds))
 
         # concatenate adjacent node embeddings to form edge embeddings
-        edge_embeddings = node_embeddings[src] + node_embeddings[dst] / 2
+        edge_embeddings = (node_embeddings[src] + node_embeddings[dst]) / 2
         assert edge_embeddings.shape[0] == edge_attr.shape[0]
         return edge_embeddings

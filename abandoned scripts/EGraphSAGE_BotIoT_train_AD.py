@@ -20,16 +20,14 @@ EPOCHS = 100
 os.environ["LOGURU_LEVEL"] = "INFO"
 device = "cpu"
 
+
 def get_metrics(y_true, y_pred_probs):
     y_pred = y_pred_probs > 0.5
     P, R = (
         precision_score(y_true, y_pred, pos_label=1),
         recall_score(y_true, y_pred, pos_label=1),
     )
-    return (roc_auc_score(y_true, y_pred_probs), 
-            2 * P * R / (P + R), 
-            P, 
-            R) 
+    return (roc_auc_score(y_true, y_pred_probs), 2 * P * R / (P + R), P, R)
 
 
 # ------------- script -------------
@@ -103,8 +101,7 @@ for epc in range(1, EPOCHS - 1):
     writer.add_histogram(f"Probs/Train/probs_hist", y_probs, epc)
 
     test_avg_loss, y_trues, y_probs, embeddings = model.train_flows(
-        test_flows, criterion=criterion, optimizer=optimizer,
-        window=WINDOW, train=False
+        test_flows, criterion=criterion, optimizer=optimizer, window=WINDOW, train=False
     )
     auc, f1, prec, rec = get_metrics(y_trues, y_probs)
     writer.add_scalar(f"F1/Test/f1", f1, epc)
