@@ -28,16 +28,17 @@ class EGraphSAGE(nn.Module):
             )
 
         # add final binary linear layer
-        self.layers.append(nn.Linear(self.channels[-1], 1))  
+        self.layers.append(nn.Linear(self.channels[-1] * 2, 1))  
 
     def forward(self, edge_attr, edge_index, node_attr):
         for i, channel in enumerate(self.channels):
 
             # linear
             if i == len(self.channels) - 1:
-                # average node embeddings for each edge
+                
+                # concat node embeddings for each edge
                 src, dst = edge_index
-                edge_embs = (node_attr[src] + node_attr[dst]) / 2
+                edge_embs = torch.cat([node_attr[src], node_attr[dst]], dim=1)
 
                 # hold embeddings
                 embeddings = edge_embs.clone().detach()

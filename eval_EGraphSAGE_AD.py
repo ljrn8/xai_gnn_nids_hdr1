@@ -110,18 +110,19 @@ plt.clf()
 candidate_threshholds = np.linspace(0, 1, 500)
 best_f1 = 0
 best_thresh = 0.5
-for t in tqdm(candidate_threshholds, desc="Finding best threshold for f1"):
-    y_pred = (y_probs > t).astype(int)
-    P, R = (
-        precision_score(y_true_bin, y_pred, pos_label=1),
-        recall_score(y_true_bin, y_pred, pos_label=1),
-    )
-    if P == 0.0:
-        break # stopped predicting any positives, no need to continue
-    f1 = 2 * P * R / (P + R) if P + R > 0 else 0.0
-    if f1 > best_f1:
-        best_f1 = f1
-        best_thresh = t
+print('!!! not serching for thershold, using 0.5 !!!')
+# for t in tqdm(candidate_threshholds, desc="Finding best threshold for f1"):
+#     y_pred = (y_probs > t).astype(int)
+#     P, R = (
+#         precision_score(y_true_bin, y_pred, pos_label=1),
+#         recall_score(y_true_bin, y_pred, pos_label=1),
+#     )
+#     if P == 0.0:
+#         break # stopped predicting any positives, no need to continue
+#     f1 = 2 * P * R / (P + R) if P + R > 0 else 0.0
+#     if f1 > best_f1:
+#         best_f1 = f1
+#         best_thresh = t
 
 logger.info(f"Best threshold: {best_thresh:.4f} with F1: {best_f1:.4f}")
 logger.info('n of mal edges edges predicted with threshold: {}'.format((y_probs > best_thresh).sum()))
