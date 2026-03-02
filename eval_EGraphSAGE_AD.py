@@ -16,9 +16,10 @@ from sklearn.metrics import (
 )
 from EGraphSAGE import EGraphSAGE
 import sys
+from loguru import logger
 
-THRESH = 0.1
-print('!!! Using threshold:', THRESH)
+THRESH = 0.5
+logger.warning('Using threshold:', THRESH)
 
 def get_metrics(y_true, y_pred_probs):
     y_pred = y_pred_probs > THRESH
@@ -35,8 +36,9 @@ def get_metrics(y_true, y_pred_probs):
 # ---------------- SETUP ----------------
 
 device = "cpu"
+
+# tensorboard log directory
 exp_dir: Path = Path(sys.argv[1])
-test_csv: Path = Path(sys.argv[2])
 if exp_dir == Path("newest"):
     exp_dirs = sorted(
         Path("interm/runs").glob("*_*"),
@@ -50,15 +52,21 @@ if exp_dir == Path("newest"):
         raise ValueError("No experiment directories found in 'interm/runs/'")
     
     exp_dir = exp_dirs[0]
-    print(f"Using newest experiment directory: {exp_dir}")
+    logger.info(f"Using newest experiment directory: {exp_dir}")
 
-print(f"Experiment directory: {exp_dir}")
+logger.info(f"Experiment directory: {exp_dir}")
 figure = Path("figures") / exp_dir.name
 figure.mkdir(exist_ok=True)
 
 # Load experiment metadata
 with open(exp_dir / "experiment.pkl", "rb") as f:
     cfg = pickle.load(f)
+
+# test flows directory is given or in experimental config pickle
+if len(sys.argv) > 2:
+    test_csv = Path(sys.argv[2])
+else:
+    test_csv = Path(cfg['test_df_location'])
 
 model_kwargs = cfg["model_kwargs"]
 WINDOW = cfg["window_size"]
@@ -70,7 +78,7 @@ model.to(device)
 model.eval()
 
 # Load test data
-print(f"Loading test data from: {test_csv}")
+logger.info(f"Loading test data from: {test_csv}")
 test_flows = pd.read_csv(test_csv)
 attack_labels = test_flows["Attack"].values  # original string labels
 
@@ -85,7 +93,7 @@ criterion = torch.nn.BCEWithLogitsLoss()
 # --------------- EVAL ---------------
 
 with torch.no_grad():
-    _, y_true_bin, y_probs, _ = model.train_flows(
+    avg_loss, y_true_bin, y_probs, _ = model.train_flows(
         test_flows,
         criterion=criterion,
         optimizer=None,
@@ -95,18 +103,18 @@ with torch.no_grad():
 
 y_true_bin = np.array(y_true_bin)
 y_probs = np.array(y_probs)
-print(f"y_probs values counts: {np.bincount((y_probs > THRESH).astype(int))}")
-print(f"start of y_probs: {y_probs[:10]}")
+logger.debug(f"y_probs values counts: {np.bincount((y_probs > THRESH).astype(int))}")
+logger.debug(f"start of y_probs: {y_probs[:10]}")
+
 
 # histogram of predicted probabilities
 plt.figure()
-plt.hist(y_probs, bins=50)
+plt.hist(y_probs, bins=100)
 plt.title("Prediction Probability Distribution")
 plt.show()
 plt.clf()
 
 y_pred_bin = (y_probs > THRESH).astype(int)
-
 
 # 1. Binary Evaluation
 print("\n===== BINARY (Benign vs Malicious) =====")
@@ -114,6 +122,9 @@ print(
     f"results from previous function in the order of (PR-AUC, ROC-AUC, F1, Precision, Recall) : {get_metrics(y_true_bin, y_probs)}"
 )
 print("ROC AUC:", roc_auc_score(y_true_bin, y_probs))
+print("Average test loss:", avg_loss)
+precision, recall, _ = precision_recall_curve(y_true_bin, y_probs)
+print("PR AUC:", auc(recall, precision))
 print(classification_report(y_true_bin, y_pred_bin, digits=4))
 
 # ROC
@@ -168,6 +179,8 @@ for attack in unique_attacks:
         continue
 
     print("ROC AUC:", roc_auc_score(y_true_attack, y_probs_attack))
+    precision, recall, _ = precision_recall_curve(y_true_attack, y_probs_attack)
+    print("PR AUC:", auc(recall, precision))
     print(classification_report(y_true_attack, y_pred_attack, digits=4))
 
     # ROC

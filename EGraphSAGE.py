@@ -1,11 +1,11 @@
+import os
 from torch import nn
 import torch
 from loguru import logger
 from torch_scatter import scatter_mean
 from ML_utils import yield_subgraphs
 import numpy as np
-
-
+    
 class EGraphSAGE(nn.Module):
     """for binary classification"""
 

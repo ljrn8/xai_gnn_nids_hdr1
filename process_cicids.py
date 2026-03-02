@@ -145,8 +145,8 @@ print("\nClass distribution in test set:")
 print(test_flows.Attack.value_counts(normalize=True))
 
 # add metadata about chunking size
-train_flows.contiguous_chunk_size = chunk_size
-test_flows.contiguous_chunk_size = chunk_size
+train_flows.contiguous_chunk_size = f'{chunk_size}, !! keep windowing a multiple of this size'
+test_flows.contiguous_chunk_size = f'{chunk_size}, !! keep windowing a multiple of this size'
 
 print('writing partitions')
 test_flows.to_csv("./interm/cicids_processed_test.csv", index=False)

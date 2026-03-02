@@ -1,3 +1,4 @@
+import sys
 import pandas as pd
 from sklearn.metrics import roc_auc_score, f1_score, recall_score, precision_score
 from sklearn.metrics import precision_recall_curve, auc
@@ -10,20 +11,21 @@ import os, pickle
 from datetime import datetime
 from pathlib import Path
 from sklearn.preprocessing import LabelEncoder
-from ML_utils import yield_subgraphs
 from loguru import logger
 from EGraphSAGE import EGraphSAGE
 
+# config
+logger.remove(0) 
+logger.add(sys.stderr, level="INFO") 
 WINDOW = 5_000
-LR = 0.0005
-# LR = 0.01
-EPOCHS = 100
+LR = 0.005
+EPOCHS = 20
 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-RUN_ID = f"EGraphSAGE_anomdetection_UNSW_graphsage_{timestamp}"
-os.environ["LOGURU_LEVEL"] = "INFO"
+RUN_ID = f"EGraphSAGE_anomdetection_CICIDS_graphsage_{timestamp}"
 device = "cpu"
 
 def get_metrics(y_true, y_pred_probs):
+    """returns pr_auc, roc_auc, f1, prec, rec"""
     y_pred = y_pred_probs > 0.5
     P, R = (
         precision_score(y_true, y_pred, pos_label=1),
@@ -36,6 +38,7 @@ def get_metrics(y_true, y_pred_probs):
 
 
 def write_metrics(y_trues, y_probs, writer, epc, train_category: bool):
+    """logs metrics to tensorboard and returns them as a tuple"""
     all_metrics = get_metrics(y_trues, y_probs)
     pr_auc, roc_auc, f1, prec, rec = all_metrics
     metrics = {"PR-AUC": pr_auc, "ROC-AUC": roc_auc, "F1": f1, "PREC": prec, "rec": rec}
@@ -49,8 +52,11 @@ def write_metrics(y_trues, y_probs, writer, epc, train_category: bool):
 
 # load processed flows
 logger.info("Loading data...", c="blue")
-train_flows = pd.read_csv("interm/unsw_nb15_processed_train.csv")
-test_flows = pd.read_csv("interm/unsw_nb15_processed_test.csv")
+# nrows = 100_000 # !! prototyping
+# train_flows = pd.read_csv("interm/cicids_processed_train.csv", nrows=nrows) # !! prototyping
+# test_flows = pd.read_csv("interm/cicids_processed_test.csv", nrows=int(nrows * 0.2)) # !! prototyping
+train_flows = pd.read_csv("interm/cicids_processed_train.csv") 
+test_flows = pd.read_csv("interm/cicids_processed_test.csv") 
 
 classes = list(np.unique(train_flows.Attack))
 flows = pd.concat([train_flows, test_flows], ignore_index=True)
@@ -68,15 +74,7 @@ log_dir.touch()
 logger.add(log_dir)
 writer = SummaryWriter(log_dir=exp_dir)
 
-# convert train_flows to 10:1 benign:attack ratio
-ben_flows = train_flows[train_flows.Attack == "Benign"]
-mal_flows = train_flows[train_flows.Attack != "Benign"]
-ben_index = np.arange(len(ben_flows))
-sample_index = np.random.choice(ben_index, replace=False, size=len(mal_flows) * 10)
-train_flows = pd.concat((mal_flows, ben_flows.iloc[sample_index]))
-# resort afterwords
-train_flows = train_flows.sort_values(by="FLOW_START_MILLISECONDS")
-
+# log class distribution and get features
 logger.info(
     f'train mal:ben = {sum(train_flows.Attack == "Benign")}:{sum(train_flows.Attack != "Benign")}'
 )
@@ -86,6 +84,7 @@ print(features)
 [features.remove(s) for s in ["src", "dst", "Attack"]]
 logger.info(f"features: [{len(features)}] {features}")
 
+# init model
 model_kwargs = {
     "hidden_channels": [256, 256],
     "num_features": len(features),
@@ -107,9 +106,9 @@ logger.info(
 logger.info(
     f"TEST: ben: {len(test_flows.Attack) - sum(test_flows.Attack)}, mal sum {sum(test_flows.Attack)}, mal perc: {np.mean(test_flows.Attack)}"
 )
-# w = float((train_flows.Attack == 0).sum() / train_flows.Attack.sum())
-criterion = torch.nn.BCEWithLogitsLoss()
 
+# BCE loss, no weights used (CICIDS is 10:1)
+criterion = torch.nn.BCEWithLogitsLoss()
 optimizer = torch.optim.Adam(model.parameters(), lr=LR)
 best_test_auc = 0.0
 
@@ -148,11 +147,6 @@ for epc in range(1, EPOCHS - 1):
         f"Test ROC AUC: {roc_auc:.4f} | "
     )
 
-    # Save best model only (using TEST PR AUC)
-    # if pr_auc > best_test_auc:
-    #     best_test_auc = pr_auc
-    #     torch.save(model.state_dict(), exp_dir / f"best_model.pt")
-
     # save current model (warning: may overfit)
     torch.save(model.state_dict(), exp_dir / f"best_model.pt")
 
@@ -162,15 +156,13 @@ for epc in range(1, EPOCHS - 1):
 
     # ------------------ Metadata ------------------
     experiment_summary = {
-        "description": f"EgraphSAGE binary anomoyl detection (no ensembling) on Bot IoT v1",
+        "description": f"EgraphSAGE binary anomoyl detection (no ensembling) on CSE CICIDS2018 v3",
         "epochs": EPOCHS,
         "model_kwargs": model_kwargs,
         "window_size": WINDOW,
         "le": le,
         "best_test_auc": best_test_auc,
         "label_encoder_classes": list(classes),
-        'lr': LR,
-        'test_df_location': 'interm/unsw_nb15_processed_test.csv', 
     }
 
     with open(exp_dir / "experiment.pkl", "wb") as f:
