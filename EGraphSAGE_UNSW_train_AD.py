@@ -14,10 +14,9 @@ from ML_utils import yield_subgraphs
 from loguru import logger
 from EGraphSAGE import EGraphSAGE
 
-WINDOW = 5_000
-LR = 0.0005
-# LR = 0.01
-EPOCHS = 100
+WINDOW = 10_000
+LR = 0.005
+EPOCHS = 30
 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 RUN_ID = f"EGraphSAGE_anomdetection_UNSW_graphsage_{timestamp}"
 os.environ["LOGURU_LEVEL"] = "INFO"
@@ -49,8 +48,9 @@ def write_metrics(y_trues, y_probs, writer, epc, train_category: bool):
 
 # load processed flows
 logger.info("Loading data...", c="blue")
-train_flows = pd.read_csv("interm/unsw_nb15_processed_train.csv")
-test_flows = pd.read_csv("interm/unsw_nb15_processed_test.csv")
+train_f, test_f = ("interm/unsw_nb15_processed_train.csv", "interm/unsw_nb15_processed_test.csv")
+train_flows = pd.read_csv(train_f)
+test_flows = pd.read_csv(test_f)
 
 classes = list(np.unique(train_flows.Attack))
 flows = pd.concat([train_flows, test_flows], ignore_index=True)
@@ -69,17 +69,29 @@ logger.add(log_dir)
 writer = SummaryWriter(log_dir=exp_dir)
 
 # convert train_flows to 10:1 benign:attack ratio
-ben_flows = train_flows[train_flows.Attack == "Benign"]
-mal_flows = train_flows[train_flows.Attack != "Benign"]
-ben_index = np.arange(len(ben_flows))
-sample_index = np.random.choice(ben_index, replace=False, size=len(mal_flows) * 10)
-train_flows = pd.concat((mal_flows, ben_flows.iloc[sample_index]))
-# resort afterwords
-train_flows = train_flows.sort_values(by="FLOW_START_MILLISECONDS")
+def resample(flows, benign_class="Benign", ratio=10):
+    ben_flows = flows[flows.Attack == benign_class]
+    mal_flows = flows[flows.Attack != benign_class]
+    ben_index = np.arange(len(ben_flows))
+    sample_index = np.random.choice(ben_index, replace=False, size=len(mal_flows) * ratio)
+    resampled_flows = pd.concat((mal_flows, ben_flows.iloc[sample_index]))
+    return resampled_flows.sort_values(by="FLOW_START_MILLISECONDS")
+
+train_flows = resample(train_flows, benign_class="Benign", ratio=10)
+test_flows = resample(test_flows, benign_class="Benign", ratio=10)
+
+logger.warning('train set resampled resulting in n flows: {}'.format(len(train_flows)))
+logger.warning('train set new class distribution: {}'.format(np.unique(train_flows.Attack, return_counts=True)))
+logger.warning('test set resampled resulting in n flows: {}'.format(len(test_flows)))
+logger.warning('test set new class distribution: {}'.format(np.unique(test_flows.Attack, return_counts=True)))
 
 logger.info(
     f'train mal:ben = {sum(train_flows.Attack == "Benign")}:{sum(train_flows.Attack != "Benign")}'
 )
+logger.info(
+    f'test mal:ben = {sum(test_flows.Attack == "Benign")}:{sum(test_flows.Attack != "Benign")}'
+)
+
 logger.info(f"class distribution: {np.unique(train_flows.Attack, return_counts=True)}")
 features = list(flows.columns)
 print(features)
@@ -107,9 +119,12 @@ logger.info(
 logger.info(
     f"TEST: ben: {len(test_flows.Attack) - sum(test_flows.Attack)}, mal sum {sum(test_flows.Attack)}, mal perc: {np.mean(test_flows.Attack)}"
 )
-# w = float((train_flows.Attack == 0).sum() / train_flows.Attack.sum())
-criterion = torch.nn.BCEWithLogitsLoss()
 
+# 10:1 class imbalance, so use pos_weight in BCE loss
+w = sum(1 - train_flows.Attack) / sum(train_flows.Attack)
+criterion = torch.nn.BCEWithLogitsLoss(pos_weight=torch.tensor(w))
+
+# optimizer
 optimizer = torch.optim.Adam(model.parameters(), lr=LR)
 best_test_auc = 0.0
 
@@ -122,7 +137,7 @@ for epc in range(1, EPOCHS - 1):
     avg_loss, y_trues, y_probs, embeddings = model.train_flows(
         train_flows, criterion=criterion, optimizer=optimizer, window=WINDOW, train=True
     )
-    pr_auc, roc_auc, f1, prec, rec = write_metrics(
+    train_pr_auc, train_roc_auc, train_f1, prec, rec = write_metrics(
         y_trues, y_probs, writer, epc, train_category=True
     )
     writer.add_scalar(f"PosRate/Train/MeanProb", np.mean(y_probs), epc)
@@ -145,13 +160,12 @@ for epc in range(1, EPOCHS - 1):
         f"Train Loss: {avg_loss:.4f} | "
         f"Test loss: {test_avg_loss:.4f} | "
         f"Test PR AUC: {pr_auc:.4f} | "
+        f"Train PR AUC: {train_pr_auc:.4f} | "
         f"Test ROC AUC: {roc_auc:.4f} | "
+        f"Train ROC AUC: {train_roc_auc:.4f} | "
+        f"Test F1: {f1:.4f} | "
+        f"Train F1: {train_f1:.4f} | "
     )
-
-    # Save best model only (using TEST PR AUC)
-    # if pr_auc > best_test_auc:
-    #     best_test_auc = pr_auc
-    #     torch.save(model.state_dict(), exp_dir / f"best_model.pt")
 
     # save current model (warning: may overfit)
     torch.save(model.state_dict(), exp_dir / f"best_model.pt")
@@ -170,7 +184,7 @@ for epc in range(1, EPOCHS - 1):
         "best_test_auc": best_test_auc,
         "label_encoder_classes": list(classes),
         'lr': LR,
-        'test_df_location': 'interm/unsw_nb15_processed_test.csv', 
+        'test_df_location': test_f, 
     }
 
     with open(exp_dir / "experiment.pkl", "wb") as f:

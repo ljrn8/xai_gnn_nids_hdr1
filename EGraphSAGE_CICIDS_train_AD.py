@@ -17,9 +17,9 @@ from EGraphSAGE import EGraphSAGE
 # config
 logger.remove(0) 
 logger.add(sys.stderr, level="INFO") 
-WINDOW = 5_000
+WINDOW = 10_000
 LR = 0.005
-EPOCHS = 20
+EPOCHS = 30
 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 RUN_ID = f"EGraphSAGE_anomdetection_CICIDS_graphsage_{timestamp}"
 device = "cpu"
@@ -121,7 +121,7 @@ for epc in range(1, EPOCHS - 1):
     avg_loss, y_trues, y_probs, embeddings = model.train_flows(
         train_flows, criterion=criterion, optimizer=optimizer, window=WINDOW, train=True
     )
-    pr_auc, roc_auc, f1, prec, rec = write_metrics(
+    train_pr_auc, train_roc_auc, train_f1, prec, rec = write_metrics(
         y_trues, y_probs, writer, epc, train_category=True
     )
     writer.add_scalar(f"PosRate/Train/MeanProb", np.mean(y_probs), epc)
@@ -144,7 +144,11 @@ for epc in range(1, EPOCHS - 1):
         f"Train Loss: {avg_loss:.4f} | "
         f"Test loss: {test_avg_loss:.4f} | "
         f"Test PR AUC: {pr_auc:.4f} | "
+        f"Train PR AUC: {train_pr_auc:.4f} | "
         f"Test ROC AUC: {roc_auc:.4f} | "
+        f"Train ROC AUC: {train_roc_auc:.4f} | "
+        f"Test F1: {f1:.4f} | "
+        f"Train F1: {train_f1:.4f} | "
     )
 
     # save current model (warning: may overfit)
@@ -163,6 +167,7 @@ for epc in range(1, EPOCHS - 1):
         "le": le,
         "best_test_auc": best_test_auc,
         "label_encoder_classes": list(classes),
+        'test_df_location': 'interm/cicids_processed_test.csv',
     }
 
     with open(exp_dir / "experiment.pkl", "wb") as f:

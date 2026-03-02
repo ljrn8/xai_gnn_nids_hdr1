@@ -14,15 +14,14 @@ from sklearn.metrics import (
     precision_recall_curve,
     classification_report,
 )
+from tqdm import tqdm
 from EGraphSAGE import EGraphSAGE
 import sys
 from loguru import logger
 
-THRESH = 0.5
-logger.warning('Using threshold:', THRESH)
 
-def get_metrics(y_true, y_pred_probs):
-    y_pred = y_pred_probs > THRESH
+def get_metrics(y_true, y_pred_probs, threshold=0.5):
+    y_pred = y_pred_probs > threshold
     P, R = (
         precision_score(y_true, y_pred, pos_label=1),
         recall_score(y_true, y_pred, pos_label=1),
@@ -37,22 +36,16 @@ def get_metrics(y_true, y_pred_probs):
 
 device = "cpu"
 
-# tensorboard log directory
+# tensorboard log directory (most recently created in interm/runs)
 exp_dir: Path = Path(sys.argv[1])
 if exp_dir == Path("newest"):
-    exp_dirs = sorted(
-        Path("interm/runs").glob("*_*"),
-        key=lambda p: (
-            int(p.name.split("_")[-1]) + int(p.name.split("_")[-2]) * 1000000 
-            if len(p.name.split("_")) >= 2 else 0
-        ),
-        reverse=True,
-    )
-    if not exp_dirs:
-        raise ValueError("No experiment directories found in 'interm/runs/'")
-    
-    exp_dir = exp_dirs[0]
+    exp_dirs = list(Path("interm/runs").glob("*"))
+    exp_dir = max(exp_dirs, key=lambda d: d.stat().st_ctime)
     logger.info(f"Using newest experiment directory: {exp_dir}")
+else:
+    if not exp_dir.exists():
+        raise ValueError(f"Experiment directory {exp_dir} does not exist.")
+    logger.info(f"Using specified experiment directory: {exp_dir}")
 
 logger.info(f"Experiment directory: {exp_dir}")
 figure = Path("figures") / exp_dir.name
@@ -103,7 +96,6 @@ with torch.no_grad():
 
 y_true_bin = np.array(y_true_bin)
 y_probs = np.array(y_probs)
-logger.debug(f"y_probs values counts: {np.bincount((y_probs > THRESH).astype(int))}")
 logger.debug(f"start of y_probs: {y_probs[:10]}")
 
 
@@ -114,7 +106,26 @@ plt.title("Prediction Probability Distribution")
 plt.show()
 plt.clf()
 
-y_pred_bin = (y_probs > THRESH).astype(int)
+# get the best threshhold
+candidate_threshholds = np.linspace(0, 1, 500)
+best_f1 = 0
+best_thresh = 0.5
+for t in tqdm(candidate_threshholds, desc="Finding best threshold for f1"):
+    y_pred = (y_probs > t).astype(int)
+    P, R = (
+        precision_score(y_true_bin, y_pred, pos_label=1),
+        recall_score(y_true_bin, y_pred, pos_label=1),
+    )
+    if P == 0.0:
+        break # stopped predicting any positives, no need to continue
+    f1 = 2 * P * R / (P + R) if P + R > 0 else 0.0
+    if f1 > best_f1:
+        best_f1 = f1
+        best_thresh = t
+
+logger.info(f"Best threshold: {best_thresh:.4f} with F1: {best_f1:.4f}")
+logger.info('n of mal edges edges predicted with threshold: {}'.format((y_probs > best_thresh).sum()))
+y_pred_bin = (y_probs > best_thresh).astype(int)
 
 # 1. Binary Evaluation
 print("\n===== BINARY (Benign vs Malicious) =====")
@@ -172,7 +183,7 @@ for attack in unique_attacks:
 
     y_true_attack = (attack_labels[mask] == attack).astype(int)
     y_probs_attack = y_probs[mask]
-    y_pred_attack = (y_probs_attack > THRESH).astype(int)
+    y_pred_attack = (y_probs_attack > best_thresh).astype(int)
 
     if len(np.unique(y_true_attack)) < 2:
         print("Skipping (only one class present)")
