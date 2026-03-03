@@ -15,14 +15,15 @@ from loguru import logger
 from EGraphSAGE import EGraphSAGE
 
 # config
-logger.remove(0) 
-logger.add(sys.stderr, level="INFO") 
+logger.remove(0)
+logger.add(sys.stderr, level="INFO")
 WINDOW = 10_000
 LR = 0.005
 EPOCHS = 30
 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 RUN_ID = f"EGraphSAGE_anomdetection_CICIDS_graphsage_{timestamp}"
 device = "cpu"
+
 
 def get_metrics(y_true, y_pred_probs):
     """returns pr_auc, roc_auc, f1, prec, rec"""
@@ -55,8 +56,8 @@ logger.info("Loading data...", c="blue")
 # nrows = 100_000 # !! prototyping
 # train_flows = pd.read_csv("interm/cicids_processed_train.csv", nrows=nrows) # !! prototyping
 # test_flows = pd.read_csv("interm/cicids_processed_test.csv", nrows=int(nrows * 0.2)) # !! prototyping
-train_flows = pd.read_csv("interm/cicids_processed_train.csv") 
-test_flows = pd.read_csv("interm/cicids_processed_test.csv") 
+train_flows = pd.read_csv("interm/cicids_processed_train.csv")
+test_flows = pd.read_csv("interm/cicids_processed_test.csv")
 
 classes = list(np.unique(train_flows.Attack))
 flows = pd.concat([train_flows, test_flows], ignore_index=True)
@@ -167,7 +168,7 @@ for epc in range(1, EPOCHS - 1):
         "le": le,
         "best_test_auc": best_test_auc,
         "label_encoder_classes": list(classes),
-        'test_df_location': 'interm/cicids_processed_test.csv',
+        "test_df_location": "interm/cicids_processed_test.csv",
     }
 
     with open(exp_dir / "experiment.pkl", "wb") as f:

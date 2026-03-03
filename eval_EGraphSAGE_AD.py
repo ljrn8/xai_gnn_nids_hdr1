@@ -59,7 +59,7 @@ with open(exp_dir / "experiment.pkl", "rb") as f:
 if len(sys.argv) > 2:
     test_csv = Path(sys.argv[2])
 else:
-    test_csv = Path(cfg['test_df_location'])
+    test_csv = Path(cfg["test_df_location"])
 
 model_kwargs = cfg["model_kwargs"]
 WINDOW = cfg["window_size"]
@@ -110,7 +110,7 @@ plt.clf()
 candidate_threshholds = np.linspace(0, 1, 500)
 best_f1 = 0
 best_thresh = 0.5
-print('!!! not serching for thershold, using 0.5 !!!')
+print("!!! not serching for thershold, using 0.5 !!!")
 # for t in tqdm(candidate_threshholds, desc="Finding best threshold for f1"):
 #     y_pred = (y_probs > t).astype(int)
 #     P, R = (
@@ -125,7 +125,11 @@ print('!!! not serching for thershold, using 0.5 !!!')
 #         best_thresh = t
 
 logger.info(f"Best threshold: {best_thresh:.4f} with F1: {best_f1:.4f}")
-logger.info('n of mal edges edges predicted with threshold: {}'.format((y_probs > best_thresh).sum()))
+logger.info(
+    "n of mal edges edges predicted with threshold: {}".format(
+        (y_probs > best_thresh).sum()
+    )
+)
 y_pred_bin = (y_probs > best_thresh).astype(int)
 
 # 1. Binary Evaluation

@@ -1,14 +1,13 @@
 import pandas as pd
 import numpy as np
-from sklearn.preprocessing import (
-    StandardScaler, LabelEncoder
-)
+from sklearn.preprocessing import StandardScaler, LabelEncoder
 from tqdm import tqdm
 
 print("Loading data")
 flows = pd.read_csv(
-    "raw/f78acbaa2afe1595_NFV3DATA-A11964_A11964/data/NF-CICIDS2018-v3.csv")
-print(f'Data loaded successfully, {len(flows)} flows')
+    "raw/f78acbaa2afe1595_NFV3DATA-A11964_A11964/data/NF-CICIDS2018-v3.csv"
+)
+print(f"Data loaded successfully, {len(flows)} flows")
 
 flows.drop(["Label", "L4_SRC_PORT", "L4_DST_PORT"], axis=1, inplace=True)
 
@@ -42,9 +41,8 @@ high_count_categorical = [
 ]
 
 
-
 # clamping
-print('Clamping outliers in numerical features')
+print("Clamping outliers in numerical features")
 numerical = high_count_categorical
 numerical_df = flows[numerical]
 for feature in numerical_df.columns:
@@ -78,7 +76,7 @@ for c in flows.columns:
 flows = flows.sort_values(by="FLOW_START_MILLISECONDS")
 
 # normalization, standrdization, OHE
-print('Normalizing and encoding features')
+print("Normalizing and encoding features")
 ss = StandardScaler()
 le = LabelEncoder()
 flows[numerical] = ss.fit_transform(flows[numerical])
@@ -123,7 +121,9 @@ for c in [
 
 
 chunk_size = 10_000
-print(f'chunking the data into [{chunk_size}] random contingous chunks to equalize class distribution between splits and maintain temporal consistency')
+print(
+    f"chunking the data into [{chunk_size}] random contingous chunks to equalize class distribution between splits and maintain temporal consistency"
+)
 
 chunks = len(flows) // chunk_size
 test_chunks_list = np.random.choice(chunks, size=int(chunks * 0.2), replace=False)
@@ -132,7 +132,7 @@ test_flows = pd.DataFrame()
 train_flows = pd.DataFrame()
 
 for i in tqdm(range(chunks)):
-    chunk = flows.iloc[i*chunk_size:(i+1)*chunk_size]
+    chunk = flows.iloc[i * chunk_size : (i + 1) * chunk_size]
     if i in test_chunks_list:
         test_flows = pd.concat([test_flows, chunk])
     else:
@@ -145,9 +145,13 @@ print("\nClass distribution in test set:")
 print(test_flows.Attack.value_counts(normalize=True))
 
 # add metadata about chunking size
-train_flows.contiguous_chunk_size = f'{chunk_size}, !! keep windowing a multiple of this size'
-test_flows.contiguous_chunk_size = f'{chunk_size}, !! keep windowing a multiple of this size'
+train_flows.contiguous_chunk_size = (
+    f"{chunk_size}, !! keep windowing a multiple of this size"
+)
+test_flows.contiguous_chunk_size = (
+    f"{chunk_size}, !! keep windowing a multiple of this size"
+)
 
-print('writing partitions')
+print("writing partitions")
 test_flows.to_csv("./interm/cicids_processed_test.csv", index=False)
 train_flows.to_csv("./interm/cicids_processed_train.csv", index=False)

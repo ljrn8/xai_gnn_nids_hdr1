@@ -22,6 +22,7 @@ RUN_ID = f"EGraphSAGE_anomdetection_UNSW_graphsage_{timestamp}"
 os.environ["LOGURU_LEVEL"] = "INFO"
 device = "cpu"
 
+
 def get_metrics(y_true, y_pred_probs):
     y_pred = y_pred_probs > 0.5
     P, R = (
@@ -48,7 +49,10 @@ def write_metrics(y_trues, y_probs, writer, epc, train_category: bool):
 
 # load processed flows
 logger.info("Loading data...", c="blue")
-train_f, test_f = ("interm/unsw_nb15_processed_train.csv", "interm/unsw_nb15_processed_test.csv")
+train_f, test_f = (
+    "interm/unsw_nb15_processed_train.csv",
+    "interm/unsw_nb15_processed_test.csv",
+)
 train_flows = pd.read_csv(train_f)
 test_flows = pd.read_csv(test_f)
 
@@ -68,22 +72,34 @@ log_dir.touch()
 logger.add(log_dir)
 writer = SummaryWriter(log_dir=exp_dir)
 
+
 # convert train_flows to 10:1 benign:attack ratio
 def resample(flows, benign_class="Benign", ratio=10):
     ben_flows = flows[flows.Attack == benign_class]
     mal_flows = flows[flows.Attack != benign_class]
     ben_index = np.arange(len(ben_flows))
-    sample_index = np.random.choice(ben_index, replace=False, size=len(mal_flows) * ratio)
+    sample_index = np.random.choice(
+        ben_index, replace=False, size=len(mal_flows) * ratio
+    )
     resampled_flows = pd.concat((mal_flows, ben_flows.iloc[sample_index]))
     return resampled_flows.sort_values(by="FLOW_START_MILLISECONDS")
+
 
 train_flows = resample(train_flows, benign_class="Benign", ratio=10)
 test_flows = resample(test_flows, benign_class="Benign", ratio=10)
 
-logger.warning('train set resampled resulting in n flows: {}'.format(len(train_flows)))
-logger.warning('train set new class distribution: {}'.format(np.unique(train_flows.Attack, return_counts=True)))
-logger.warning('test set resampled resulting in n flows: {}'.format(len(test_flows)))
-logger.warning('test set new class distribution: {}'.format(np.unique(test_flows.Attack, return_counts=True)))
+logger.warning("train set resampled resulting in n flows: {}".format(len(train_flows)))
+logger.warning(
+    "train set new class distribution: {}".format(
+        np.unique(train_flows.Attack, return_counts=True)
+    )
+)
+logger.warning("test set resampled resulting in n flows: {}".format(len(test_flows)))
+logger.warning(
+    "test set new class distribution: {}".format(
+        np.unique(test_flows.Attack, return_counts=True)
+    )
+)
 
 logger.info(
     f'train mal:ben = {sum(train_flows.Attack == "Benign")}:{sum(train_flows.Attack != "Benign")}'
@@ -183,8 +199,8 @@ for epc in range(1, EPOCHS - 1):
         "le": le,
         "best_test_auc": best_test_auc,
         "label_encoder_classes": list(classes),
-        'lr': LR,
-        'test_df_location': test_f, 
+        "lr": LR,
+        "test_df_location": test_f,
     }
 
     with open(exp_dir / "experiment.pkl", "wb") as f:

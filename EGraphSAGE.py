@@ -5,7 +5,8 @@ from loguru import logger
 from torch_scatter import scatter_mean
 from ML_utils import yield_subgraphs
 import numpy as np
-    
+
+
 class EGraphSAGE(nn.Module):
     """for binary classification"""
 
@@ -22,20 +23,20 @@ class EGraphSAGE(nn.Module):
             self.layers.append(
                 EdgeSAGELayer(
                     edge_features=self.num_features,
-                    in_channels=self.channels[i], 
-                    out_channels=self.channels[i + 1]
+                    in_channels=self.channels[i],
+                    out_channels=self.channels[i + 1],
                 )
             )
 
         # add final binary linear layer
-        self.layers.append(nn.Linear(self.channels[-1] * 2, 1))  
+        self.layers.append(nn.Linear(self.channels[-1] * 2, 1))
 
     def forward(self, edge_attr, edge_index, node_attr):
         for i, channel in enumerate(self.channels):
 
             # linear
             if i == len(self.channels) - 1:
-                
+
                 # concat node embeddings for each edge
                 src, dst = edge_index
                 edge_embs = torch.cat([node_attr[src], node_attr[dst]], dim=1)
@@ -78,10 +79,11 @@ class EGraphSAGE(nn.Module):
                 optimizer.zero_grad()
 
             n_nodes = G.edge_index.max().item() + 1
-            logits, emb = self.forward(G.edge_attr, 
-                                       G.edge_index, 
-                                       node_attr=torch.ones(
-                                           size=(n_nodes, self.num_features)).to(device))
+            logits, emb = self.forward(
+                G.edge_attr,
+                G.edge_index,
+                node_attr=torch.ones(size=(n_nodes, self.num_features)).to(device),
+            )
             probs = torch.sigmoid(logits)
             y = G.y.to(device).float()
             loss = criterion(logits, y)
@@ -130,7 +132,6 @@ class EdgeSAGELayer(nn.Module):
 
         node_edge_concat_embs = torch.cat([node_attr, edge_aggregated_mean], dim=1)
         new_node_embeddings = torch.sigmoid(self.W(node_edge_concat_embs))
-        
+
         assert new_node_embeddings.shape[0] == node_attr.shape[0]
         return new_node_embeddings
-        
