@@ -45,12 +45,12 @@ class GNNExplainer(nn.Module):
 
     def regularization(self, edge_mask, feature_mask):
         reg = 0
-        reg += self.edge_reg_weight * torch.mean([self.elementwise_entropy(e) for e in edge_mask])
-        reg += self.feature_reg_weight * torch.mean([self.elementwise_entropy(e) for e in feature_mask])
-        reg += self.l1_norm_reg * (torch.mean(edge_mask) + torch.mean(feature_mask) / 2) 
+        reg += self.edge_reg_weight * torch.mean(torch.tensor([GNNExplainer.elementwise_entropy(e) for e in edge_mask]))
+        reg += self.feature_reg_weight * torch.mean(torch.tensor([GNNExplainer.elementwise_entropy(e) for e in feature_mask]))
+        reg += self.l1_norm_weight * (torch.mean(edge_mask) + torch.mean(feature_mask) / 2) 
         return reg
     
-    def sample_from_empirical(edge_attr, feature_bank):
+    def sample_from_empirical(self, edge_attr, feature_bank):
         n_edges, n_features = edge_attr.shape
         N = feature_bank.shape[0]
         idx = torch.randint(0, N, (n_edges, n_features))
@@ -66,10 +66,10 @@ class GNNExplainer(nn.Module):
             param.requires_grad = False
 
         for i, G in enumerate(yield_subgraphs(test_flows, window, linegraph=False)):
-            num_features = len(test_flows.columns) - 3 # src dst Attack
+            num_features = len(test_fl ows.columns) - 3 # src dst Attack
             num_nodes = G.edge_index.max().item() + 1
 
-            # initialize edge mask with requires_grad
+            # initialize edge mas k with requires_grad
             feature_mask = torch.randn((num_features), requires_grad=True, device=device)
             edge_mask = torch.randn((G.edge_attr.shape[0]), requires_grad=True, device=device)
             optimizer = torch.optim.Adam([edge_mask, feature_mask], lr=lr)
@@ -81,8 +81,9 @@ class GNNExplainer(nn.Module):
                 
 				# impirical marginal distribution sampling for noise features (Z)
                 optimizer.zero_grad()
-                Z = self.sample_from_empirical(G.edge_attr, 
+                Z = torch.FloatTensor(np.array(self.sample_from_empirical(G.edge_attr, 
                                           feature_bank=test_flows[test_flows.columns.difference(['src', 'dst', 'Attack'])].values)
+                , dtype=float))
 
                 # reparameterization trick
                 feature_masked_edge_attr = Z + ((G.edge_attr - Z) * feature_weights)
@@ -100,7 +101,7 @@ class GNNExplainer(nn.Module):
                 masked_y_pred = torch.sigmoid(masked_y_pred)
 
                 loss = loss_f(masked_y_pred, y_pred)
-                reg = self.entropy_regularization(edge_weights)
+                reg = self.regularization(edge_weights, feature_mask=feature_weights)
                 total_loss = loss + reg
 
                 total_loss.backward()
