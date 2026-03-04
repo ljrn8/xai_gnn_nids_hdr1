@@ -22,7 +22,6 @@ device = "cpu"
 def debug(message, **kwargs):
     log(message, **kwargs, debug=True, c="red")
 
-
 def log(message, c=None, debug=False, lstrip=False):
     fore_col = Fore.__getattribute__(c.upper()) if c else ""
     reset = Style.RESET_ALL if c else ""
@@ -40,6 +39,13 @@ def log(message, c=None, debug=False, lstrip=False):
     debug_prefix = "DEBUG" if debug and DEBUG else ""
     print(f"{fore_col} > {debug_prefix} LOG: {message} {reset}", flush=True)
 
+
+def fidelities(y_pred, y_mask, y_imask, y):
+    """ Phenominal fidelity+ and Fidelity- (expects THRESHOLDED values) 
+    """
+    fp = ((y_pred == y).float() - (y_imask == y).float()).abs().mean()
+    fm = ((y_pred == y).float() - (y_mask == y).float()).abs().mean()
+    return fp, fm
 
 def train_graph(model, train_graph, optimizer, loss_fn, y_train):
     model.train()
@@ -109,58 +115,6 @@ def yield_subgraphs(flows, window, target_col="Attack", linegraph=True):
             target_col=target_col,
         )
         yield window_graph
-
-
-# def graph_encode(data, edge_cols: list, linegraph: bool, target_col: str = None):
-#     """convert flows df to pyG graph with G.x[-1] as target"""
-
-#     assert target_col in data.columns
-#     cols = [c for c in data.columns if c != target_col] + [target_col]
-#     data = data[cols]
-
-#     attrs = [
-#         c
-#         for c in data.columns
-#         if c not in edge_cols
-#     ]
-
-#     x = data[attrs].to_numpy(dtype=np.float32)
-#     edge_attr = torch.tensor(x, dtype=torch.float)
-
-#     nodes = pd.concat([data["src"], data["dst"]]).unique()
-#     node_map = {n: i for i, n in enumerate(nodes)}
-
-#     src_name, dst_name = edge_cols
-#     src = data[src_name].map(node_map).to_numpy()
-#     dst = data[dst_name].map(node_map).to_numpy()
-
-#     edge_index = torch.tensor(np.stack([src, dst]), dtype=torch.long)
-
-#     G = Data(
-#         edge_index=edge_index,
-#         edge_attr=edge_attr,
-#         num_nodes=len(nodes),
-#     )
-
-#     # make bidirectional
-#     edge_index = G.edge_index
-#     edge_attr = G.edge_attr
-#     edge_index = torch.cat([edge_index, edge_index.flip(0)], dim=1)
-#     edge_attr = torch.cat([edge_attr, edge_attr], dim=0)
-#     G.edge_index = edge_index
-#     G.edge_attr = edge_attr
-
-#     if linegraph:
-#         G.x = G.edge_attr
-#         G = LineGraph()(G)
-
-#         # ensure linegraph is also birectional
-#         edge_index = G.edge_index
-#         edge_index = torch.cat([edge_index, edge_index.flip(0)], dim=1)
-#         G.edge_index = edge_index
-
-
-#     return G, node_map
 
 
 def graph_encode(data, edge_cols: list, linegraph: bool, target_col: str = None):
