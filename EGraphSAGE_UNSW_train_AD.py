@@ -15,13 +15,13 @@ from loguru import logger
 from EGraphSAGE import EGraphSAGE
 
 WINDOW = 10_000
-LR = 0.005
-EPOCHS = 30
+LR = 0.01
+EPOCHS = 20
+
 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 RUN_ID = f"EGraphSAGE_anomdetection_UNSW_graphsage_{timestamp}"
 os.environ["LOGURU_LEVEL"] = "INFO"
 device = "cpu"
-
 
 def get_metrics(y_true, y_pred_probs):
     y_pred = y_pred_probs > 0.5
@@ -71,7 +71,6 @@ log_dir = exp_dir / "run.log"
 log_dir.touch()
 logger.add(log_dir)
 writer = SummaryWriter(log_dir=exp_dir)
-
 
 # convert train_flows to 10:1 benign:attack ratio
 def resample(flows, benign_class="Benign", ratio=10):
@@ -203,7 +202,9 @@ for epc in range(1, EPOCHS - 1):
         "test_df_location": test_f,
     }
 
+    logger.info(f'saving to experimental directory: {exp_dir}')
     with open(exp_dir / "experiment.pkl", "wb") as f:
         pickle.dump(experiment_summary, f)
+
 
 writer.close()
