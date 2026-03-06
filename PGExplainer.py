@@ -11,7 +11,9 @@ from EGraphSAGE import EGraphSAGE
 import numpy as np
 from pprint import pprint
 from datetime import datetime
-
+from ML_utils import graph_encode
+import argparse
+from varname import nameof
 
 device = 'cpu'
 
@@ -26,21 +28,20 @@ class PGExplainer(nn.Module):
 	IMPIRICAL_REPARAMATERIZATION = True
 	TAU = 0.01
 
-	def __init__(self, full_edge_attr, 
-			  feature_reg_weight=0.1, 
+	def __init__(self, 
+			  n_features,
+			  full_edge_attr=None, 
 			  edge_entr_reg=0.1, 
 			  edge_sum_reg=0.1, 
 			  mlp_lasso_reg=0.1,
-			  hidden_mlp_layers=128, **kwargs):
+			  hidden_parameters=128, **kwargs):
 		
 		super().__init__(**kwargs)
-		n_features = full_edge_attr.shape[1]
 		self.mlp = nn.Sequential(
-			nn.Linear(in_features=n_features, out_features=hidden_mlp_layers),
+			nn.Linear(in_features=n_features, out_features=hidden_parameters),
 			nn.ReLU(),
-			nn.Linear(in_features=hidden_mlp_layers, out_features=1)
+			nn.Linear(in_features=hidden_parameters, out_features=1)
 		)
-		self.feature_reg_weight = feature_reg_weight
 		self.l1_norm_weight = edge_sum_reg
 		self.edge_reg_weight = edge_entr_reg
 		self.mlp_lasso_reg = mlp_lasso_reg
@@ -57,6 +58,7 @@ class PGExplainer(nn.Module):
 		return reg
 
 	def sample_from_empirical(self, edge_attr):
+		"""Randomly (impirically) sample from X_E for downstream MC estimation"""
 		feature_bank = self.full_edge_attr
 		n_edges, n_features = edge_attr.shape
 		N = feature_bank.shape[0]
@@ -90,7 +92,8 @@ class PGExplainer(nn.Module):
 		and potentially impirical sampling for the 'subgraph' of the same size.
 		"""
 		masked_edge_attr = self.sample_masked_graph(
-			G, mask, 
+			G, 
+			mask, 
 			tau=self.TAU, 
 			impirical_reparamaterization=self.IMPIRICAL_REPARAMATERIZATION
 		)
@@ -98,16 +101,16 @@ class PGExplainer(nn.Module):
 		masked_y_pred, _ = model.forward(
 			masked_edge_attr, 
 			G.edge_index,
-			node_attr=torch.ones(size=(n_nodes, masked_edge_attr.shape[0])).to(device)
+			node_attr=torch.ones(size=(n_nodes, masked_edge_attr.shape[1])).to(device)
 		)
 		return masked_y_pred
 		
 
-	def appromiximate_subgraph_prediction(self, G, model, mask, samples=10):
+	def appromiximate_subgraph_prediction(self, model, G, mask, samples=10):
 		""" sample subgraph predictions from the fractional mask with MC estimation """
 		predictions = []
-		for _ in samples:
-			predictions.append(self.get_masked_prediction(self, model, G, mask))
+		for _ in range(samples):
+			predictions.append(torch.sigmoid(self.get_masked_prediction(model, G, mask)))
 
 		if samples > 1:
 			all_preds = torch.vstack(predictions)
@@ -119,8 +122,7 @@ class PGExplainer(nn.Module):
 		return masked_y_pred_mean
 
 
-	def fit(self, model, test_flows, epochs,
-                 window, lr=0.01, loss_f=torch.nn.BCELoss()):
+	def fit(self, model, G, epochs, lr=0.01, loss_f=torch.nn.BCELoss(), reset_params=True):
 		
         # need to freeze model so optimizer only touches the mask at BCE(Y, Y^)
 		model.eval()
@@ -130,47 +132,113 @@ class PGExplainer(nn.Module):
 		# normal prediction
 		with torch.no_grad():
 			n_nodes = G.edge_index.max().item() + 1
-			n_features = self.full_edge_attr.shape[1]
+			n_features = G.edge_attr.shape[1]
 			y_pred, _ = model.forward(
 				G.edge_attr, 
 				G.edge_index,
 				node_attr=torch.ones(size=(n_nodes, n_features)).to(device)) 
+			y_pred = torch.sigmoid(y_pred)
 
 		# train MLP on window
-		for i, G in enumerate(yield_subgraphs(test_flows, window, linegraph=False)):
-			optimizer = torch.optim.Adam(self.mlp.parameters(), lr=lr)
-			losses, mask_regularization = [], []
+		optimizer = torch.optim.Adam(self.mlp.parameters(), lr=lr)
+		losses, mask_regularization = [], []
 
-			for epc in range(1, 1 + epochs):
-				mask_logits = self.mlp(G.edge_attr)
-				l1_norm = sum(p.abs().sum() for p in model.parameters())
-				mask = torch.sigmoid(mask_logits)
+		logger.info('training..')
+		for epc in tqdm(range(1, 1 + epochs)):
+			mask_logits = self.mlp(G.edge_attr)
+			l1_norm = sum(p.abs().sum() for p in model.parameters())
+			mask = torch.sigmoid(mask_logits).squeeze()
 
-				# enforce that all predicted malicious flows are in the explanation mask
-				y_pred_binary = y_pred > self.MODEL_PRED_THRESHOLD
-				mask = mask - (mask + torch.ones_like(mask)) * y_pred_binary
-				
-				# masked prediction
-				y_pred_masked = self.appromiximate_subgraph_prediction(model, G, mask)
-				loss = loss_f(y_pred, y_pred_masked)
+			# enforce that all predicted malicious flows are in the explanation mask
+			logger.info(f'shapes= {mask}, {y_pred.shape}')
+			y_pred_binary = y_pred > self.MODEL_PRED_THRESHOLD
+			mask = mask - (mask + torch.ones_like(mask)) * y_pred_binary
+			
+			# masked prediction
+			y_pred_masked = self.appromiximate_subgraph_prediction(model, G, mask)
+			loss = loss_f(y_pred, y_pred_masked)
 
-				# regularization 
-				reg = self.regularization(mask)
-				total_loss = loss + reg + (self.mlp_lasso_reg * l1_norm)
+			# regularization 
+			reg = self.regularization(mask)
+			total_loss = loss + reg + (self.mlp_lasso_reg * l1_norm)
+			logger.info(
+				f'epoch: {epc} | '
+				f"av loss for mask: {np.mean(losses):.5f} | "
+				f"edge mask average value: {torch.mean(mask):.5f} | "
+				f"regularization penalty: {reg:.5f} | "
+			)
 
-				total_loss.backward()
-				optimizer.step()
+			losses.append(loss.detach())
+			mask_regularization.append(reg.detach())
 
-				losses.append(loss.detach())
-				mask_regularization.append(reg.detach())
+			total_loss.backward()
+			optimizer.step()
 
-				logger.info(
-					f'epoch: {epc} | '
-					f"av loss for mask: {np.mean(losses):.5f} | "
-					f"edge mask average value: {torch.mean(mask):.5f} | "
-					f"regularization penalty: {reg:.5f} | "
-				)
 
-			losses_out = torch.stack(losses).cpu().numpy()
-			regularization_penalties_out = torch.stack(mask_regularization).cpu().numpy()
-			yield (G, mask, losses_out, regularization_penalties_out)
+			
+
+		losses_out = torch.stack(losses).cpu().numpy()
+		regularization_penalties_out = torch.stack(mask_regularization).cpu().numpy()
+		return (mask, losses_out, regularization_penalties_out)
+
+
+
+if __name__ == '__main__':
+
+	parser = argparse.ArgumentParser()
+	parser.add_argument('-e', '--epochs', default=100, type=int) 
+	parser.add_argument('-lr', '--learning-rate', default=0.01, type=float) 
+	parser.add_argument('-eer', '--edge-entropy-reg', default=0.01, type=float) 
+	parser.add_argument('-esr', '--edge-sum-reg', default=0.01, type=float) 
+	parser.add_argument('-l', '--lasso-reg', default=0.01, type=float) 
+	parser.add_argument('-p', '--parameters', help='number of parameters in MLP', 
+					 default=128, type=int) 
+	args = parser.parse_args()
+
+	timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+	test_f = Path('interm/unsw_nb15_processed_test.csv', nrows=10_000) # !!! prototyping
+	model_dir = Path('interm/runs/EGraphSAGE_anomdetection_UNSW_graphsage_20260303_033347/best_model.pkl')
+	logger.info('loading data')
+	test_flows = pd.read_csv(test_f)
+
+	logger.info('loading model ..')
+	with open(model_dir, 'rb') as f:
+		model = pickle.load(f)
+
+	model.to(device)
+
+	# convert test_flows Attack to binary
+	test_flows["Attack"] = torch.Tensor(
+		(test_flows["Attack"] != "Benign").astype(float).values
+	).float()
+
+	metrics_output_dir = Path(f'interm/xAI/GNNE_{timestamp}')
+	metrics_output_dir.mkdir(parents=True, exist_ok=True)
+
+	logger.info('encoding graph')
+	G, _ = graph_encode(test_flows, edge_cols=['src', 'dst'], 
+				  target_col='Attack', linegraph=False)
+
+	pge = PGExplainer(
+		n_features= G.edge_attr.shape[1],
+		hidden_parameters=args.parameters,
+		edge_entr_reg=args.edge_entropy_reg,
+		edge_sum_reg=args.edge_sum_reg,
+		full_edge_attr=G.edge_attr
+	)
+
+	experimental_output = {
+		'meta': {nameof(m): m for m in [
+			args, model_dir, test_f, metrics_output_dir]},
+		'description': 'PGExplainer for line prediction NIDS',
+	}
+
+	logger.info('fitting PGE')
+	experimental_output['results'] = {
+		nameof(output): output for output in pge.fit(model, G, epochs=args.epochs,
+											    lr=args.learning_rate)
+	}
+
+	logger.info('writing experiment output')
+	with open(metrics_output_dir / f'experiment.pkl', 'wb') as f:
+		pickle.dump(experimental_output, f)
