@@ -68,7 +68,7 @@ class GNNExplainer(nn.Module):
                 feature_mask = torch.sigmoid(feature_W)
 
                 y_pred, masked_y_pred = self.masked_forward(model, G, edge_mask, feature_mask)
-                loss = loss_f(masked_y_pred, y_pred)
+                loss = loss_f(y_pred, masked_y_pred)
 
                 # regularization that controls sparsity and confidence
                 reg = self.regularization(edge_mask, feature_mask)
@@ -136,6 +136,7 @@ class GNNExplainer(nn.Module):
             masked_y_pred_mean = mask_y_candidates[0]
         
         return torch.sigmoid(y_pred), torch.sigmoid(masked_y_pred_mean)
+    
     
     def evaluate_window(self, model, G, edge_mask, feature_mask, 
                         prediction_threshhold=0.5, sparsities=np.arange(0, 0.4, 0.02)):
