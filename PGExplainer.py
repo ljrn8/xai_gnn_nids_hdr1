@@ -48,6 +48,7 @@ class PGExplainer(nn.Module):
 		self.full_edge_attr = full_edge_attr
 
 	def elementwise_entropy(x):
+		x = x.clamp(1e-6, 1 - 1e-6)
 		return -x * torch.log2(x) - (1-x)*torch.log2(1-x)
 
 	def regularization(self, edge_mask):
@@ -150,9 +151,9 @@ class PGExplainer(nn.Module):
 			mask = torch.sigmoid(mask_logits).squeeze()
 
 			# enforce that all predicted malicious flows are in the explanation mask
-			logger.info(f'shapes= {mask}, {y_pred.shape}')
-			y_pred_binary = y_pred > self.MODEL_PRED_THRESHOLD
-			mask = mask - (mask + torch.ones_like(mask)) * y_pred_binary
+			# logger.info(f'shapes= {mask}, {y_pred.shape}')
+			# y_pred_binary = y_pred > self.MODEL_PRED_THRESHOLD
+			# mask = mask - (mask - torch.ones_like(mask)) * y_pred_binary
 			
 			# masked prediction
 			y_pred_masked = self.appromiximate_subgraph_prediction(model, G, mask)
@@ -161,43 +162,28 @@ class PGExplainer(nn.Module):
 			# regularization 
 			reg = self.regularization(mask)
 			total_loss = loss + reg + (self.mlp_lasso_reg * l1_norm)
-			logger.info(
-				f'epoch: {epc} | '
-				f"av loss for mask: {np.mean(losses):.5f} | "
-				f"edge mask average value: {torch.mean(mask):.5f} | "
-				f"regularization penalty: {reg:.5f} | "
-			)
-
+			
 			losses.append(loss.detach())
 			mask_regularization.append(reg.detach())
 
+			logger.info(
+				f'epoch: {epc} | ' + 
+				f"loss for mask: {loss} | " + 
+				f"mask average value: {torch.mean(mask)} | " + 
+				f"regularization penalty: {reg} | " 
+			)
+
+			optimizer.zero_grad()
 			total_loss.backward()
 			optimizer.step()
 
-
-			
-
-		losses_out = torch.stack(losses).cpu().numpy()
-		regularization_penalties_out = torch.stack(mask_regularization).cpu().numpy()
-		return (mask, losses_out, regularization_penalties_out)
-
-
-
-if __name__ == '__main__':
-
-	parser = argparse.ArgumentParser()
-	parser.add_argument('-e', '--epochs', default=100, type=int) 
-	parser.add_argument('-lr', '--learning-rate', default=0.01, type=float) 
-	parser.add_argument('-eer', '--edge-entropy-reg', default=0.01, type=float) 
-	parser.add_argument('-esr', '--edge-sum-reg', default=0.01, type=float) 
-	parser.add_argument('-l', '--lasso-reg', default=0.01, type=float) 
-	parser.add_argument('-p', '--parameters', help='number of parameters in MLP', 
-					 default=128, type=int) 
-	args = parser.parse_args()
-
+		return (mask, losses, mask_regularization)
+	
+	
+def main(args):
 	timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-	test_f = Path('interm/unsw_nb15_processed_test.csv', nrows=10_000) # !!! prototyping
-	model_dir = Path('interm/runs/EGraphSAGE_anomdetection_UNSW_graphsage_20260303_033347/best_model.pkl')
+	test_f = Path(args.test_flows_csv) 
+	model_dir = Path(args.model)
 	logger.info('loading data')
 	test_flows = pd.read_csv(test_f)
 
@@ -242,3 +228,21 @@ if __name__ == '__main__':
 	logger.info('writing experiment output')
 	with open(metrics_output_dir / f'experiment.pkl', 'wb') as f:
 		pickle.dump(experimental_output, f)
+
+
+if __name__ == '__main__':
+	parser = argparse.ArgumentParser()
+	parser.add_argument('-e', '--epochs', default=100, type=int) 
+	parser.add_argument('-lr', '--learning-rate', default=0.01, type=float) 
+	parser.add_argument('-eer', '--edge-entropy-reg', default=0.01, type=float) 
+	parser.add_argument('-esr', '--edge-sum-reg', default=0.01, type=float) 
+	parser.add_argument('-l', '--lasso-reg', default=0.01, type=float) 
+	parser.add_argument('-p', '--parameters', help='number of parameters in MLP', default=64, type=int) 
+	parser.add_argument('-tf', '--test-flows-csv', 
+					 default='interm/unsw_nb15_processed_test.csv',
+					 help='location of processsed test flow dataset (numeric only), requiring src, dst and Attack columns')
+	parser.add_argument('-m', '--model', 
+					 default='interm/runs/EGraphSAGE_anomdetection_UNSW_graphsage_20260303_033347/best_model.pkl',
+					 help='location of pickled binary EGraphSAGE model') 
+
+	main(parser.parse_args())
