@@ -10,32 +10,23 @@ import os, pickle
 from datetime import datetime
 from pathlib import Path
 from sklearn.preprocessing import LabelEncoder
-from ML_utils import yield_subgraphs
+from ML_utils import yield_subgraphs, graph_encode
 from loguru import logger
 from EGraphSAGE import EGraphSAGE
 
-WINDOW = 10_000
-LR = 0.01
-EPOCHS = 20
-
-timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-RUN_ID = f"EGraphSAGE_anomdetection_UNSW_graphsage_{timestamp}"
-os.environ["LOGURU_LEVEL"] = "INFO"
-device = "cpu"
-
-def get_metrics(y_true, y_pred_probs):
+def get_metrics(y_true: torch.Tensor, y_pred_probs: torch.Tensor):
     y_pred = y_pred_probs > 0.5
     P, R = (
         precision_score(y_true, y_pred, pos_label=1),
         recall_score(y_true, y_pred, pos_label=1),
     )
-    precision, recall, _ = precision_recall_curve(y_true, y_pred_probs, pos_label=1)
+    precision, recall, _ = precision_recall_curve(y_true, y_pred_probs.detach().numpy(), pos_label=1)
     pr_auc = auc(recall, precision)
     F1 = 2 * P * R / (P + R) if P + R > 0 else 0.0
-    return (pr_auc, roc_auc_score(y_true, y_pred_probs), F1, P, R)
+    return (pr_auc, roc_auc_score(y_true, y_pred_probs.detach().numpy()), F1, P, R)
 
 
-def write_metrics(y_trues, y_probs, writer, epc, train_category: bool):
+def write_metrics(y_trues: torch.Tensor, y_probs: torch.Tensor, writer, epc, train_category: bool):
     all_metrics = get_metrics(y_trues, y_probs)
     pr_auc, roc_auc, f1, prec, rec = all_metrics
     metrics = {"PR-AUC": pr_auc, "ROC-AUC": roc_auc, "F1": f1, "PREC": prec, "rec": rec}
@@ -46,6 +37,12 @@ def write_metrics(y_trues, y_probs, writer, epc, train_category: bool):
 
 
 # ------------- script -------------
+
+LR = 0.001
+EPOCHS = 50
+timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+RUN_ID = f"EGraphSAGE_anomdetection_UNSW_AD_no_windows{timestamp}"
+device = "cpu"
 
 # load processed flows
 logger.info("Loading data...", c="blue")
@@ -71,6 +68,7 @@ log_dir = exp_dir / "run.log"
 log_dir.touch()
 logger.add(log_dir)
 writer = SummaryWriter(log_dir=exp_dir)
+
 
 # convert train_flows to 10:1 benign:attack ratio
 def resample(flows, benign_class="Benign", ratio=10):
@@ -143,37 +141,43 @@ criterion = torch.nn.BCEWithLogitsLoss(pos_weight=torch.tensor(w))
 optimizer = torch.optim.Adam(model.parameters(), lr=LR)
 best_test_auc = 0.0
 
+logger.info('encoding graphs')
+test_G, _ = graph_encode(test_flows, edge_cols=['src', 'dst'], linegraph=False, target_col='Attack')
+train_G, _ = graph_encode(train_flows, edge_cols=['src', 'dst'], linegraph=False, target_col='Attack')
+
 # ----------------------------------------------------------------
 # ----------------------- TRAINING LOOP --------------------------
 for epc in range(1, EPOCHS - 1):
 
     # ----- TRAIN -----
+    logger.info('training...')
     model.train()
-    avg_loss, y_trues, y_probs, embeddings = model.train_flows(
-        train_flows, criterion=criterion, optimizer=optimizer, window=WINDOW, train=True
+    loss, y, probs, emb = model.pass_flowgraph(
+        train_G, criterion=criterion, optimizer=optimizer, train=True, debug=True
     )
     train_pr_auc, train_roc_auc, train_f1, prec, rec = write_metrics(
-        y_trues, y_probs, writer, epc, train_category=True
+        y, probs, writer, epc, train_category=True
     )
-    writer.add_scalar(f"PosRate/Train/MeanProb", np.mean(y_probs), epc)
-    writer.add_histogram(f"Probs/Train/probs_hist", y_probs, epc)
+    writer.add_scalar(f"PosRate/Train/MeanProb", torch.mean(probs), epc)
+    writer.add_histogram(f"Probs/Train/probs_hist", probs, epc)
 
     # ---- TEST -----
+    logger.info('testing...')
     model.eval()
     with torch.no_grad():
-        test_avg_loss, y_trues, y_probs, embeddings = model.train_flows(
-            test_flows, criterion=criterion, optimizer=None, window=WINDOW, train=False
+        test_loss, test_y, test_probs, test_emb = model.pass_flowgraph(
+            test_G, criterion=criterion, optimizer=optimizer, train=False, debug=True
         )
         pr_auc, roc_auc, f1, prec, rec = write_metrics(
-            y_trues, y_probs, writer, epc, train_category=False
+            test_y, test_probs, writer, epc, train_category=False
         )
-        writer.add_scalar(f"PosRate/Test/MeanProb", np.mean(y_probs), epc)
-        writer.add_histogram(f"Probs/Test/probs_hist", y_probs, epc)
+        writer.add_scalar(f"PosRate/Test/MeanProb", torch.mean(test_probs), epc)
+        writer.add_histogram(f"Probs/Test/probs_hist", test_probs, epc)
 
     logger.info(
         f"Epoch {epc:02d} | "
-        f"Train Loss: {avg_loss:.4f} | "
-        f"Test loss: {test_avg_loss:.4f} | "
+        f"Train Loss: {loss:.4f} | "
+        f"Test loss: {test_loss:.4f} | "
         f"Test PR AUC: {pr_auc:.4f} | "
         f"Train PR AUC: {train_pr_auc:.4f} | "
         f"Test ROC AUC: {roc_auc:.4f} | "
@@ -194,7 +198,6 @@ for epc in range(1, EPOCHS - 1):
         "description": f"EgraphSAGE binary anomoyl detection (no ensembling) on Bot IoT v1",
         "epochs": EPOCHS,
         "model_kwargs": model_kwargs,
-        "window_size": WINDOW,
         "le": le,
         "best_test_auc": best_test_auc,
         "label_encoder_classes": list(classes),
@@ -202,7 +205,7 @@ for epc in range(1, EPOCHS - 1):
         "test_df_location": test_f,
     }
 
-    logger.info(f'saving to experimental directory: {exp_dir}')
+    logger.info(f"saving to experimental directory: {exp_dir}")
     with open(exp_dir / "experiment.pkl", "wb") as f:
         pickle.dump(experiment_summary, f)
 

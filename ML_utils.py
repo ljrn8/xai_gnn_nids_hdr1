@@ -22,6 +22,7 @@ device = "cpu"
 def debug(message, **kwargs):
     log(message, **kwargs, debug=True, c="red")
 
+
 def log(message, c=None, debug=False, lstrip=False):
     fore_col = Fore.__getattribute__(c.upper()) if c else ""
     reset = Style.RESET_ALL if c else ""
@@ -41,11 +42,11 @@ def log(message, c=None, debug=False, lstrip=False):
 
 
 def fidelities(y_pred, y_mask, y_imask, y):
-    """ Phenominal fidelity+ and Fidelity- (expects THRESHOLDED values) 
-    """
+    """Phenominal fidelity+ and Fidelity- (expects THRESHOLDED values)"""
     fp = ((y_pred == y).float() - (y_imask == y).float()).abs().mean()
     fm = ((y_pred == y).float() - (y_mask == y).float()).abs().mean()
     return fp, fm
+
 
 def train_graph(model, train_graph, optimizer, loss_fn, y_train):
     model.train()

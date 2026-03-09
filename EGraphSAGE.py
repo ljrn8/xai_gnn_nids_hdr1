@@ -8,7 +8,7 @@ import numpy as np
 
 
 class EGraphSAGE(nn.Module):
-    """for binary classification"""
+    """for binary flow classification"""
 
     def __init__(self, hidden_channels: list, num_features):
         super(EGraphSAGE, self).__init__()
@@ -31,19 +31,26 @@ class EGraphSAGE(nn.Module):
         # add final binary linear layer
         self.layers.append(nn.Linear(self.channels[-1] * 2, 1))
 
-    def forward(self, edge_attr, edge_index, node_attr):
-        for i, channel in enumerate(self.channels):
 
+    def forward(self, edge_attr, edge_index, node_attr=None):
+        if not node_attr:
+            num_nodes = edge_index.max().item() + 1
+            # initialise node attr as mean of neighbouring edge features
+            node_attr = scatter_mean(
+                edge_attr, 
+                edge_index[1],  # dst nodes — aggregate incoming edges per node
+                dim=0, 
+                dim_size=num_nodes
+            )
+
+        for i, channel in enumerate(self.channels):
             # linear
             if i == len(self.channels) - 1:
-
                 # concat node embeddings for each edge
                 src, dst = edge_index
                 edge_embs = torch.cat([node_attr[src], node_attr[dst]], dim=1)
-
                 # hold embeddings
                 embeddings = edge_embs.clone().detach()
-
                 # final binary MLP layer
                 linear_layer = self.layers[i]
                 edge_attr = linear_layer(edge_embs)
@@ -59,7 +66,35 @@ class EGraphSAGE(nn.Module):
 
         return edge_attr.view(-1), embeddings
 
-    def train_flows(
+
+    def pass_flowgraph(self, G, criterion, optimizer, train=True, device='cpu', debug=True):
+        if train:
+            optimizer.zero_grad()
+        else:
+            self.eval()
+
+        n_nodes = G.edge_index.max().item() + 1
+        logits, emb = self.forward(G.edge_attr, G.edge_index)
+        probs = torch.sigmoid(logits)
+        y = G.y.to(device).float()
+        loss = criterion(logits, y)
+
+        if debug:
+            logger.debug(
+                f"Graph pass done: edge index shape {G.edge_index.shape} edge_attr shape {G.edge_attr.shape}"
+            )
+            logger.debug(f"y shape = {y.size()}")
+            logger.debug(f"y unique = {np.unique(y, return_counts=True)}")
+            logger.debug(f"probs average = {torch.mean(probs)}")
+
+        if train:
+            loss.backward()
+            optimizer.step()
+
+        return loss, y, probs, emb
+
+
+    def pass_flowgraph_windows(
         self,
         flows,
         criterion,
@@ -75,30 +110,9 @@ class EGraphSAGE(nn.Module):
         """
         losses, y_trues, y_probs, embeddings = [], [], [], []
         for i, G in enumerate(yield_subgraphs(flows, window, linegraph=False)):
-            if train:
-                optimizer.zero_grad()
-
-            n_nodes = G.edge_index.max().item() + 1
-            logits, emb = self.forward(
-                G.edge_attr,
-                G.edge_index,
-                node_attr=torch.ones(size=(n_nodes, self.num_features)).to(device),
+            loss, y, probs, emb = self.pass_flowgraph(
+                G, criterion, optimizer, train=train, device=device, debug=i%50==0
             )
-            probs = torch.sigmoid(logits)
-            y = G.y.to(device).float()
-            loss = criterion(logits, y)
-
-            if i % 100 == 0:
-                logger.debug(
-                    f"WINDOW index={i}: edge index shape {G.edge_index.shape} edge_attr shape {G.edge_attr.shape}"
-                )
-                logger.debug(f"y shape = {y.size()}")
-                logger.debug(f"y unique = {np.unique(y, return_counts=True)}")
-
-            if train:
-                loss.backward()
-                optimizer.step()
-
             losses.append(loss.item())
             y_trues.append(y)
             y_probs.append(probs)
