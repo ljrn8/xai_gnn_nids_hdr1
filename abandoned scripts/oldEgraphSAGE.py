@@ -5,7 +5,7 @@ from loguru import logger
 from torch_scatter import scatter_mean
 from ML_utils import yield_subgraphs
 import numpy as np
-from torch import Tensor
+
 
 class EGraphSAGE(nn.Module):
     """for binary flow classification"""
@@ -32,13 +32,13 @@ class EGraphSAGE(nn.Module):
         self.layers.append(nn.Linear(self.channels[-1] * 2, 1))
 
 
-    def forward(self, edge_attr, edge_index, node_attr=None, edge_weight=None, node_weight=None):
+    def forward(self, edge_attr, edge_index, node_attr=None):
         if not node_attr:
             num_nodes = edge_index.max().item() + 1
             # initialise node attr as mean of neighbouring edge features
             node_attr = scatter_mean(
-                edge_attr if edge_weight is None else edge_attr * edge_weight.unsqueeze(1), 
-                edge_index[1], 
+                edge_attr, 
+                edge_index[1],  # dst nodes — aggregate incoming edges per node
                 dim=0, 
                 dim_size=num_nodes
             )
@@ -50,7 +50,7 @@ class EGraphSAGE(nn.Module):
                 src, dst = edge_index
                 edge_embs = torch.cat([node_attr[src], node_attr[dst]], dim=1)
                 # hold embeddings
-                embeddings = edge_embs.clone()
+                embeddings = edge_embs.clone().detach()
                 # final binary MLP layer
                 linear_layer = self.layers[i]
                 edge_attr = linear_layer(edge_embs)
@@ -59,29 +59,26 @@ class EGraphSAGE(nn.Module):
             else:
                 SAGE_layer = self.layers[i]
                 node_attr = SAGE_layer(
-                    edge_attr=edge_attr,
-                    edge_index=edge_index,
+                    edge_attr,
+                    edge_index,
                     node_attr=node_attr,
-                    edge_weight=edge_weight,
-                    node_weight=node_weight
                 )
 
         return edge_attr.view(-1), embeddings
 
 
-    def pass_flowgraph(self, G, criterion, optimizer, edge_weight=None, node_weight=None,
-                       train=True, device='cpu', debug=True):
+    def pass_flowgraph(self, G, criterion, optimizer, train=True, device='cpu', debug=True):
         if train:
             optimizer.zero_grad()
         else:
             self.eval()
 
         n_nodes = G.edge_index.max().item() + 1
-        logits, emb = self.forward(G.edge_attr, G.edge_index, 
-                                   edge_weight=edge_weight, node_weight=node_weight)
+        logits, emb = self.forward(G.edge_attr, G.edge_index)
         probs = torch.sigmoid(logits)
         y = G.y.to(device).float()
         loss = criterion(logits, y)
+
         if debug:
             logger.debug(
                 f"Graph pass done: edge index shape {G.edge_index.shape} edge_attr shape {G.edge_attr.shape}"
@@ -97,7 +94,7 @@ class EGraphSAGE(nn.Module):
         return loss, y, probs, emb
 
 
-    def _pass_flowgraph_windows(
+    def pass_flowgraph_windows(
         self,
         flows,
         criterion,
@@ -106,7 +103,7 @@ class EGraphSAGE(nn.Module):
         train=True,
         device="cpu",
     ):
-        """ !! Old method do not use
+        """
         - expects columns in flows: src, dst and Attack, and all numeric
         - expects Attack to 0 (ben) and 1 (mal) for training
         - criterion must work on sigmoid probabilities (binary)
@@ -133,28 +130,14 @@ class EGraphSAGE(nn.Module):
 
 
 class EdgeSAGELayer(nn.Module):
-    def __init__(self, edge_features: int, in_channels: int, out_channels: int):
+    def __init__(self, edge_features, in_channels, out_channels):
         super().__init__()
         self.W = nn.Linear(in_channels + edge_features, out_channels)
 
-    def forward(
-            self, 
-            edge_index, 
-            edge_attr, 
-            node_attr, 
-            edge_weight=None,
-            node_weight=None
-    ):
-    
+    def forward(self, edge_attr, edge_index, node_attr):
         # edge_attr: (E, F)
         # edge_index: (2, E)
-        assert edge_index.shape[0] == 2, 'this is edge index (changed order recently)'
-
         num_nodes = edge_index.max().item() + 1
-
-        if edge_weight is not None:
-            assert edge_weight.shape[0] == edge_attr.shape[0], f'bad weight shape in forward, not {edge_attr.shape[0]}'
-            edge_attr = edge_attr * edge_weight.unsqueeze(1)
 
         target_indices = edge_index[0, :].reshape(-1)
         edge_aggregated_mean = scatter_mean(
@@ -162,11 +145,7 @@ class EdgeSAGELayer(nn.Module):
         )
 
         node_edge_concat_embs = torch.cat([node_attr, edge_aggregated_mean], dim=1)
-        new_node_embeddings = torch.relu(self.W(node_edge_concat_embs))
-
-        if node_weight is not None:
-            assert node_weight.shape[0] == new_node_embeddings.shape[0], f'bad weight shape in forward, not {new_node_embeddings.shape[0]}'
-            new_node_embeddings = new_node_embeddings * node_weight.unsqueeze(1)
+        new_node_embeddings = torch.sigmoid(self.W(node_edge_concat_embs))
 
         assert new_node_embeddings.shape[0] == node_attr.shape[0]
         return new_node_embeddings
