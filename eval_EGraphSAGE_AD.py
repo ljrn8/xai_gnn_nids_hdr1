@@ -40,9 +40,11 @@ def most_recent_object(exp_dir):
     logger.info(f"Using newest experiment directory: {exp_dir}")
     return exp_dir
 
+
 # ----- SCRIPT ------
 
 import argparse
+
 parser = argparse.ArgumentParser()
 parser.add_argument(
     "-tf",
@@ -59,7 +61,7 @@ args = parser.parse_args()
 
 exp_dir: Path = Path(args.experimental_directory)
 if exp_dir == Path("newest"):
-    exp_dir = most_recent_object(Path('interm/runs'))
+    exp_dir = most_recent_object(Path("interm/runs"))
 else:
     if not exp_dir.exists():
         raise ValueError(f"Experiment directory {exp_dir} does not exist.")
@@ -67,7 +69,7 @@ else:
 
 device = "cpu"
 logger.info(f"Experiment directory: {exp_dir}")
-figures = Path("figures") / 'EgraphSAGE' / exp_dir.name
+figures = Path("figures") / "EgraphSAGE" / exp_dir.name
 figures.mkdir(exist_ok=True)
 
 # Load experiment metadata
@@ -101,7 +103,9 @@ test_flows["Attack"] = torch.Tensor(
 criterion = torch.nn.BCEWithLogitsLoss()
 
 # Eval
-G, _ = graph_encode(test_flows, edge_cols=['src', 'dst'], linegraph=False, target_col='Attack') 
+G, _ = graph_encode(
+    test_flows, edge_cols=["src", "dst"], linegraph=False, target_col="Attack"
+)
 with torch.no_grad():
     loss, y, y_probs, emb = model.pass_flowgraph(
         G, criterion, optimizer=None, train=False
@@ -230,4 +234,4 @@ for attack in unique_attacks:
     plt.savefig(figures / f"Probability Distribution - {attack}.png")
     plt.clf()
 
-    logger.info(f'finished eval for experiment {exp_dir}')
+    logger.info(f"finished eval for experiment {exp_dir}")

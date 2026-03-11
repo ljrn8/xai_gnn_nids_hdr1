@@ -14,19 +14,24 @@ from ML_utils import yield_subgraphs, graph_encode
 from loguru import logger
 from EGraphSAGE import EGraphSAGE
 
+
 def get_metrics(y_true: torch.Tensor, y_pred_probs: torch.Tensor):
     y_pred = y_pred_probs > 0.5
     P, R = (
         precision_score(y_true, y_pred, pos_label=1),
         recall_score(y_true, y_pred, pos_label=1),
     )
-    precision, recall, _ = precision_recall_curve(y_true, y_pred_probs.detach().numpy(), pos_label=1)
+    precision, recall, _ = precision_recall_curve(
+        y_true, y_pred_probs.detach().numpy(), pos_label=1
+    )
     pr_auc = auc(recall, precision)
     F1 = 2 * P * R / (P + R) if P + R > 0 else 0.0
     return (pr_auc, roc_auc_score(y_true, y_pred_probs.detach().numpy()), F1, P, R)
 
 
-def write_metrics(y_trues: torch.Tensor, y_probs: torch.Tensor, writer, epc, train_category: bool):
+def write_metrics(
+    y_trues: torch.Tensor, y_probs: torch.Tensor, writer, epc, train_category: bool
+):
     all_metrics = get_metrics(y_trues, y_probs)
     pr_auc, roc_auc, f1, prec, rec = all_metrics
     metrics = {"PR-AUC": pr_auc, "ROC-AUC": roc_auc, "F1": f1, "PREC": prec, "rec": rec}
@@ -36,33 +41,47 @@ def write_metrics(y_trues: torch.Tensor, y_probs: torch.Tensor, writer, epc, tra
     return all_metrics
 
 
+def validate_flow_dataframe(flows):
+    for required_col in ["src", "dst", "Attack"]:
+        assert required_col in flows.columns, "missing required col"
+
+
 # ------------- script -------------
 
-LR = 0.001
-EPOCHS = 50
-timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-RUN_ID = f"EGraphSAGE_anomdetection_UNSW_AD_no_windows{timestamp}"
-device = "cpu"
+# parse arguments
+import argparse
+
+parser = argparse.ArgumentParser()
+parser.add_argument("--lr", default=0.01, type=float)
+parser.add_argument("--epochs", default=50, type=int)
+parser.add_argument("--layer-size", default=256, type=int)
+parser.add_argument("--num_layers", default=1, type=int)
+parser.add_argument("--train-flows", default="interm/unsw_nb15_processed_train.csv")
+parser.add_argument("--test-flows", default="interm/unsw_nb15_processed_test.csv")
+parser.add_argument("--device", default="cpu")
+parser.add_argument("--run-directory", default="interm/runs")
+args = parser.parse_args()
+logger.info(f"using args: {args}")
+run_ID = f"EGraphSAGE_AD_{Path(args.train_flows).stem}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+channels = [args.layer_size] * args.num_layers
 
 # load processed flows
-logger.info("Loading data...", c="blue")
-train_f, test_f = (
-    "interm/unsw_nb15_processed_train.csv",
-    "interm/unsw_nb15_processed_test.csv",
-)
-train_flows = pd.read_csv(train_f)
-test_flows = pd.read_csv(test_f)
-
+logger.info(f"Loading data from {args.train_flows}, {args.test_flows}...", c="blue")
+train_flows = pd.read_csv(args.train_flows)
+test_flows = pd.read_csv(args.test_flows)
 classes = list(np.unique(train_flows.Attack))
 flows = pd.concat([train_flows, test_flows], ignore_index=True)
 logger.info("Loaded", c="blue")
 
-# FIT label encoder for future use
+# expected conditions for flows
+validate_flow_dataframe(flows)
+
+# fit label encoder for future use
 le = LabelEncoder()
 le.fit(flows.Attack)
 
 # experimental directory
-exp_dir = Path(f"interm/runs/{RUN_ID}")
+exp_dir = Path(args.run_directory) / run_ID
 exp_dir.mkdir(parents=True, exist_ok=True)
 log_dir = exp_dir / "run.log"
 log_dir.touch()
@@ -109,14 +128,16 @@ logger.info(f"class distribution: {np.unique(train_flows.Attack, return_counts=T
 features = list(flows.columns)
 print(features)
 [features.remove(s) for s in ["src", "dst", "Attack"]]
-logger.info(f"features: [{len(features)}] {features}")
 
 model_kwargs = {
-    "hidden_channels": [256, 256],
-    "num_features": len(features),
+    "layer_sizes": channels,
+    "flow_features": len(features),
+    "output_dim": 1,
 }
 model = EGraphSAGE(**model_kwargs)
-logger.info(model)
+logger.info(f"MODEL SUMMARY: ", model)
+for layer in model.layers:
+    logger.info(layer)
 
 # re encode attack for anomoly detection
 train_attack_classes, test_attack_classes = train_flows.Attack, test_flows.Attack
@@ -138,19 +159,23 @@ w = sum(1 - train_flows.Attack) / sum(train_flows.Attack)
 criterion = torch.nn.BCEWithLogitsLoss(pos_weight=torch.tensor(w))
 
 # optimizer
-optimizer = torch.optim.Adam(model.parameters(), lr=LR)
+optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
 best_test_auc = 0.0
 
-logger.info('encoding graphs')
-test_G, _ = graph_encode(test_flows, edge_cols=['src', 'dst'], linegraph=False, target_col='Attack')
-train_G, _ = graph_encode(train_flows, edge_cols=['src', 'dst'], linegraph=False, target_col='Attack')
+logger.info("encoding graphs")
+test_G, _ = graph_encode(
+    test_flows, edge_cols=["src", "dst"], linegraph=False, target_col="Attack"
+)
+train_G, _ = graph_encode(
+    train_flows, edge_cols=["src", "dst"], linegraph=False, target_col="Attack"
+)
 
 # ----------------------------------------------------------------
 # ----------------------- TRAINING LOOP --------------------------
-for epc in range(1, EPOCHS - 1):
+for epc in range(1, args.epochs - 1):
 
     # ----- TRAIN -----
-    logger.info('training...')
+    logger.info("training...")
     model.train()
     loss, y, probs, emb = model.pass_flowgraph(
         train_G, criterion=criterion, optimizer=optimizer, train=True, debug=True
@@ -162,7 +187,7 @@ for epc in range(1, EPOCHS - 1):
     writer.add_histogram(f"Probs/Train/probs_hist", probs, epc)
 
     # ---- TEST -----
-    logger.info('testing...')
+    logger.info("testing...")
     model.eval()
     with torch.no_grad():
         test_loss, test_y, test_probs, test_emb = model.pass_flowgraph(
@@ -195,14 +220,15 @@ for epc in range(1, EPOCHS - 1):
 
     # ------------------ Metadata ------------------
     experiment_summary = {
-        "description": f"EgraphSAGE binary anomoyl detection (no ensembling) on Bot IoT v1",
-        "epochs": EPOCHS,
+        "description": f"EgraphSAGE binary anomoly detection with args: {args}",
+        "epochs": args.epochs,
         "model_kwargs": model_kwargs,
         "le": le,
         "best_test_auc": best_test_auc,
         "label_encoder_classes": list(classes),
-        "lr": LR,
-        "test_df_location": test_f,
+        "lr": args.lr,
+        "test_df_location": args.test_flows,
+        "train_df_location": args.train_flows,
     }
 
     logger.info(f"saving to experimental directory: {exp_dir}")

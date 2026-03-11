@@ -13,10 +13,18 @@ from colorama import init, Fore, Style
 from loguru import logger
 import torch
 import torch.nn.functional as F
+from pathlib import Path
 
 DEBUG = 0
 init()  # colour logs
 device = "cpu"
+
+
+def most_recent_object(exp_dir):
+    exp_dirs = list(Path(exp_dir).glob("*"))
+    exp_dir = max(exp_dirs, key=lambda d: d.stat().st_ctime)
+    logger.info(f"Using newest experiment directory: {exp_dir}")
+    return Path(exp_dir)
 
 
 def debug(message, **kwargs):

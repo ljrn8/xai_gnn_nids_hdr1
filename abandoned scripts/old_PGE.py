@@ -16,6 +16,7 @@ import argparse
 import matplotlib.pyplot as plt
 from varname import nameof
 
+
 class PGExplainer(nn.Module):
     """PGExplainer adapted for link prediction on network flows
     Current tenatic aspects of the impl include
@@ -39,7 +40,9 @@ class PGExplainer(nn.Module):
         super().__init__(**kwargs)
         self.mlp = nn.Sequential(
             # model embed features x2 for node emb concatenations to produce edge embs
-            nn.Linear(in_features=model_embedding_features*2, out_features=hidden_parameters),
+            nn.Linear(
+                in_features=model_embedding_features * 2, out_features=hidden_parameters
+            ),
             nn.ReLU(),
             nn.Linear(in_features=hidden_parameters, out_features=1),
         )
@@ -54,7 +57,9 @@ class PGExplainer(nn.Module):
 
     def regularization(self, edge_mask):
         edge_mask = edge_mask.clamp(1e-6, 1 - 1e-6)
-        entropy = -edge_mask * torch.log2(edge_mask) - (1 - edge_mask) * torch.log2(1 - edge_mask)
+        entropy = -edge_mask * torch.log2(edge_mask) - (1 - edge_mask) * torch.log2(
+            1 - edge_mask
+        )
         reg = self.edge_reg_weight * entropy.mean()
         reg += self.l1_norm_weight * edge_mask.mean()
         return reg
@@ -153,9 +158,11 @@ class PGExplainer(nn.Module):
 
             # masked prediction
             y_pred_masked = self.appromiximate_subgraph_prediction(model, G, mask)
-            
+
             # only compute loss on malicious edges
-            loss = loss_f(y_pred[mal_prediction_mask], y_pred_masked[mal_prediction_mask])
+            loss = loss_f(
+                y_pred[mal_prediction_mask], y_pred_masked[mal_prediction_mask]
+            )
 
             # regularization and update
             reg = self.regularization(mask) + (self.mlp_lasso_reg * l1_norm)
@@ -175,21 +182,25 @@ class PGExplainer(nn.Module):
             )
             if verbose:
                 bins, bin_edges = np.histogram(y_pred.detach().numpy(), bins=10)
-                hist = {edge: val for edge,val in zip(bin_edges[1:], bins)}
-                print(f"---- MASKED prediction stats\n mean:{torch.mean(y_pred):.5f} \nhistogram: {hist}")
+                hist = {edge: val for edge, val in zip(bin_edges[1:], bins)}
+                print(
+                    f"---- MASKED prediction stats\n mean:{torch.mean(y_pred):.5f} \nhistogram: {hist}"
+                )
                 plt.hist(y_pred_masked.detach().numpy(), bins=500)
                 plt.show()
-                
-                bins, bin_edges  = np.histogram(y_pred_masked.detach().numpy(), bins=10)
-                hist = {edge: val for edge,val in zip(bin_edges[1:], bins)}
-                print(f"---- NORMAL prediction stats\n mean:{torch.mean(y_pred_masked):.5f} \nhistogram: {hist}")
+
+                bins, bin_edges = np.histogram(y_pred_masked.detach().numpy(), bins=10)
+                hist = {edge: val for edge, val in zip(bin_edges[1:], bins)}
+                print(
+                    f"---- NORMAL prediction stats\n mean:{torch.mean(y_pred_masked):.5f} \nhistogram: {hist}"
+                )
                 plt.hist(y_pred.detach().numpy(), bins=500)
                 plt.show()
-                
-            
+
         return (mask, losses, mask_regularization)
 
-def main(args, device = "cpu"):
+
+def main(args, device="cpu"):
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     test_f = Path(args.test_flows_csv)
     model_dir = Path(args.model)
@@ -221,7 +232,7 @@ def main(args, device = "cpu"):
         edge_entr_reg=args.edge_entropy_reg,
         edge_sum_reg=args.edge_sum_reg,
         full_edge_attr=G.edge_attr,
-        mlp_lasso_reg=args.lasso_reg
+        mlp_lasso_reg=args.lasso_reg,
     )
 
     experimental_output = {
@@ -234,7 +245,7 @@ def main(args, device = "cpu"):
         "description": "PGExplainer for line prediction NIDS",
     }
 
-    logger.info('learning explanation')
+    logger.info("learning explanation")
     mask, losses, mask_regularization = pge.fit(
         model, G, epochs=args.epochs, lr=args.learning_rate
     )
