@@ -12,18 +12,22 @@ import pickle
 from pathlib import Path
 from EGraphSAGE import EGraphSAGE
 import argparse
+from tqdm import tqdm
+
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--experiment-pickle', default=most_recent_object("./interm/xAI"))
-parser.add_argument('--output-figures-directory', default="figures/xAI_graphs")
+parser.add_argument("--experiment-pickle", default=most_recent_object("./interm/xAI"))
+parser.add_argument("--output-figures-directory", default="figures/xAI_graphs")
+parser.add_argument("--skip-show-graphs", action='store_true')
 args = parser.parse_args()
+skip = args.skip_show_graphs
 
 # load experiment
 with open(args.experiment_pickle, "rb") as f:
     explainability_report = pickle.load(f)
 
 # load test data from experiment metadata
-test_f = explainability_report['test_f']
+test_f = explainability_report["test_f"]
 test_flows = pd.read_csv(test_f)
 
 # load model from experiment metadata
@@ -42,18 +46,21 @@ plt.figure(figsize=(4, 4))
 plt.plot(losses)
 plt.title("loss")
 plt.savefig(figures_output / "loss.png")
-plt.show()
+if not skip: plt.show()
+else: plt.clf()
 
 plt.figure(figsize=(4, 4))
 plt.plot(reg_losses)
 plt.title("reg loss")
 plt.savefig(figures_output / "reg losses.png")
-plt.show()
+if not skip: plt.show()
+else: plt.clf()
 
 mask = explainability_report["results"]["mask"].detach().numpy()
 plt.hist(mask, bins=500)
 plt.savefig(figures_output / "mask hist.png")
-plt.show()
+if not skip: plt.show()
+else: plt.clf()
 
 # convert test_flows Attack to binary
 test_flows["Attack"] = torch.Tensor(
@@ -63,15 +70,14 @@ G, _ = graph_encode(
     test_flows, edge_cols=["src", "dst"], linegraph=False, target_col="Attack"
 )
 
-sparsities = np.arange(0, 1.0, 0.02)
-
-from tqdm import tqdm
-
+# normal predictions reference
 y_pred, _ = model.forward(
     G.edge_attr,
     G.edge_index,
 )
 
+# sparsity variation graphs
+sparsities = np.arange(0, 1.0, 0.02)
 fps, fms, threshes = [], [], []
 for s in tqdm(sparsities, desc=f"Evaluating masks at spasities"):
     # threshold = np.percentile(mask, s * 100)
@@ -114,7 +120,8 @@ plt.title("fid+")
 plt.savefig(figures_output / "fid+")
 plt.xlim((0, 1))
 plt.ylim((0, 1))
-plt.show()
+if not skip: plt.show()
+else: plt.clf()
 
 plt.figure(figsize=(4, 4))
 plt.title("fid-")
@@ -122,9 +129,11 @@ plt.plot(sparsities, fms)
 plt.savefig(figures_output / "fid-")
 plt.xlim((0, 1))
 plt.ylim((0, 1))
-plt.show()
+if not skip: plt.show()
+else: plt.clf()
 
 plt.figure(figsize=(4, 4))
 plt.plot(sparsities, threshes)
 plt.savefig(figures_output / "Threshholds")
-plt.show()
+if not skip: plt.show()
+else: plt.clf()

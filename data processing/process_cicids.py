@@ -5,14 +5,18 @@ from tqdm import tqdm
 
 print("Loading data")
 flows = pd.read_csv(
-    "raw/f78acbaa2afe1595_NFV3DATA-A11964_A11964/data/NF-CICIDS2018-v3.csv"
+    "../raw/f78acbaa2afe1595_NFV3DATA-A11964_A11964/data/NF-CICIDS2018-v3.csv"
 )
 print(f"Data loaded successfully, {len(flows)} flows")
 
-flows.drop(["Label", "L4_SRC_PORT", "L4_DST_PORT"], axis=1, inplace=True)
+flows["src"] = (
+    flows["IPV4_SRC_ADDR"].astype(str) + ":" + flows["L4_SRC_PORT"].astype(str)
+)
+flows["dst"] = (
+    flows["IPV4_DST_ADDR"].astype(str) + ":" + flows["L4_SRC_PORT"].astype(str)
+)
 
-flows["src"] = flows["IPV4_SRC_ADDR"].astype(str)
-flows["dst"] = flows["IPV4_DST_ADDR"].astype(str)
+flows.drop(["Label", "L4_SRC_PORT", "L4_DST_PORT"], axis=1, inplace=True)
 
 flows.drop(
     ["IPV4_SRC_ADDR", "IPV4_DST_ADDR"],
@@ -153,5 +157,5 @@ test_flows.contiguous_chunk_size = (
 )
 
 print("writing partitions")
-test_flows.to_csv("./interm/cicids_processed_test.csv", index=False)
-train_flows.to_csv("./interm/cicids_processed_train.csv", index=False)
+test_flows.to_csv("../interm/cicids_processed_test.csv", index=False)
+train_flows.to_csv("../interm/cicids_processed_train.csv", index=False)

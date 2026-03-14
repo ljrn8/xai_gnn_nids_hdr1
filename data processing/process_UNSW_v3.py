@@ -8,8 +8,12 @@ flows = pd.read_csv(
     "../raw/f7546561558c07c5_NFV3DATA-A11964_A11964/data/NF-UNSW-NB15-v3.csv"
 )
 
-flows["src"] = flows["IPV4_SRC_ADDR"].astype(str) + ':' + flows['L4_SRC_PORT'].astype(str)
-flows["dst"] = flows["IPV4_DST_ADDR"].astype(str) + ':' + flows['L4_DST_PORT'].astype(str)
+flows["src"] = (
+    flows["IPV4_SRC_ADDR"].astype(str) + ":" + flows["L4_SRC_PORT"].astype(str)
+)
+flows["dst"] = (
+    flows["IPV4_DST_ADDR"].astype(str) + ":" + flows["L4_DST_PORT"].astype(str)
+)
 
 flows.drop(["Label", "L4_SRC_PORT", "L4_DST_PORT"], axis=1, inplace=True)
 

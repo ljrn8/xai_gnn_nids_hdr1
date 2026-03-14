@@ -57,6 +57,7 @@ parser.add_argument(
     "--experimental-directory",
     default="newest",
 )
+parser.add_argument("--nrows-test", default=None, type=int)
 args = parser.parse_args()
 
 exp_dir: Path = Path(args.experimental_directory)
@@ -76,11 +77,7 @@ figures.mkdir(exist_ok=True)
 with open(exp_dir / "experiment.pkl", "rb") as f:
     cfg = pickle.load(f)
 
-# test flows directory is given or in experimental config pickle
-if len(sys.argv) > 2:
-    test_csv = Path(sys.argv[2])
-else:
-    test_csv = Path(cfg["test_df_location"])
+test_csv = Path(cfg["test_df_location"])
 
 # Rebuild model
 with open(exp_dir / "best_model.pkl", "rb") as f:
@@ -90,8 +87,11 @@ model.eval()
 
 # Load test data
 logger.info(f"Loading test data from: {test_csv}")
-test_flows = pd.read_csv(test_csv)
-
+test_flows = (
+    pd.read_csv(test_csv)
+    if args.nrows_test is None
+    else pd.read_csv(test_csv, nrows=args.nrows_test)
+)
 
 # Binary encoding (same logic as training)
 attack_labels = test_flows["Attack"].values  # original string labels

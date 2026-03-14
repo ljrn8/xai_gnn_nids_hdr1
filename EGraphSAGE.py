@@ -3,10 +3,15 @@ from torch import nn
 import torch
 from loguru import logger
 from torch_scatter import scatter_mean
-from ML_utils import yield_subgraphs
+from ML_utils import  graph_encode
 import numpy as np
 from torch import Tensor
-
+import pickle
+from pathlib import Path
+from torch.utils.tensorboard import SummaryWriter
+from ML_utils import write_metrics
+from tqdm import tqdm
+import itertools
 
 class EGraphSAGE(nn.Module):
     """for binary flow classification"""
@@ -106,8 +111,7 @@ class EGraphSAGE(nn.Module):
         else:
             self.eval()
 
-        n_nodes = G.edge_index.max().item() + 1
-        logits, emb, node_emb = self.forward(
+        logits, emb, _ = self.forward(
             G.edge_attr, G.edge_index, edge_weight=edge_weight, node_weight=node_weight
         )
         probs = torch.sigmoid(logits)
@@ -127,11 +131,105 @@ class EGraphSAGE(nn.Module):
 
         return loss, y, probs, emb
 
+    def pass_flow_windows(self, flow_generator, n_windows=None, **kwargs):
+        """pass flow graphs from flow generator, with kwargs for pass_flowgraph"""
+        window_losses, ys, probs = [], [] ,[]      
+        for train_window in tqdm(flow_generator, total=n_windows):
+            G, _ = graph_encode(train_window, edge_cols=['src', 'dst'], 
+                                linegraph=False, target_col='Attack')
+            loss, y, prob, _ = self.pass_flowgraph(G=G, **kwargs)
+            window_losses.append(loss)
+            ys.append(y)
+            probs.append(prob)
+            del G
+
+        return [torch.hstack(m) for m in (window_losses, ys, probs)]
+
+    def train_flows(
+        self,
+        train_flow_generator,
+        test_flow_generator,
+        criterion,
+        optimizer,
+        epochs,
+        experiment_summary: dict,
+        experimental_directory: Path,
+        n_train_windows=None
+    ):
+        """Self explanatory"""
+        writer = SummaryWriter(log_dir=experimental_directory)
+
+        # ----------------------------------------------------------------
+        # ----------------------- TRAINING LOOP --------------------------
+        test_iterators = itertools.tee(test_flow_generator, epochs)
+        train_iterators = itertools.tee(train_flow_generator, epochs)
+
+        for epc, test_flow_iter, train_flow_iter in zip(
+            range(1, epochs - 1), test_iterators, train_iterators
+        ):
+
+            # ----- TRAIN -----
+            logger.info("training...")
+            self.train()
+            window_losses, y, probs = self.pass_flow_windows(
+                train_flow_iter, 
+                criterion=criterion,
+                optimizer=optimizer,
+                train=True,
+                n_windows=n_train_windows
+            )
+
+            avg_train_loss = torch.mean(window_losses)
+            train_pr_auc, train_roc_auc, train_f1, prec, rec = write_metrics(
+                y, probs, writer, epc, avg_train_loss, train_category=True
+            )
+            writer.add_scalar(f"PosRate/Train/MeanProb", torch.mean(probs), epc)
+            writer.add_histogram(f"Probs/Train/probs_hist", probs, epc)
+
+            # ---- TEST -----
+            logger.info("testing...")
+            self.eval()
+            with torch.no_grad():
+                test_window_losses, test_y, test_probs = self.pass_flow_windows(
+                    flow_generator=test_flow_iter, 
+                    criterion=criterion,
+                    optimizer=None,
+                    train=False,
+                )
+                avg_test_loss = torch.mean(test_window_losses)
+                pr_auc, roc_auc, f1, prec, rec = write_metrics(
+                    test_y, test_probs, writer, epc, avg_test_loss, train_category=False
+                )
+                writer.add_scalar(f"PosRate/Test/MeanProb", torch.mean(test_probs), epc)
+                writer.add_histogram(f"Probs/Test/probs_hist", test_probs, epc)
+
+            logger.info(
+                f"Epoch {epc:02d} \n"
+                f"Av Window Train Loss: {avg_train_loss:.4f} \n"
+                f"Av Window Test loss: {avg_test_loss:.4f} \n"
+                f"Test PR AUC: {pr_auc:.4f} \n"
+                f"Train PR AUC: {train_pr_auc:.4f} \n"
+                f"Test ROC AUC: {roc_auc:.4f} \n"
+                f"Train ROC AUC: {train_roc_auc:.4f} \n"
+                f"Test F1: {f1:.4f} \n"
+                f"Train F1: {train_f1:.4f} \n"
+            )
+
+            # save current model (warning: may overfit)
+            torch.save(self.state_dict(), experimental_directory / f"current_model.pt")
+
+            # also try saving ws pickle (weight issue with custom model?)
+            with open(experimental_directory / "best_model.pkl", "wb") as f:
+                pickle.dump(self, f)
+
+            # Write Metadata 
+            logger.info(f"saving to experimental directory: {experimental_directory}")
+            with open(experimental_directory / "experiment.pkl", "wb") as f:
+                pickle.dump(experiment_summary, f)
+
 
 class EdgeSAGELayer(nn.Module):
-    """
-    Produces new node embeddings based off Aggregated edge features
-    """
+    """Produces new node embeddings based off Aggregated edge features"""
 
     def __init__(self, edge_features: int, in_channels: int, out_channels: int):
         super().__init__()
@@ -171,9 +269,7 @@ class EdgeSAGELayer(nn.Module):
 
 
 class SAGELayer(nn.Module):
-    """
-    Produces new node embeddings based off aggregated node neighbourhood
-    """
+    """Produces new node embeddings based off aggregated node neighbourhood"""
 
     def __init__(self, in_channels: int, out_channels: int):
         super().__init__()
@@ -194,7 +290,7 @@ class SAGELayer(nn.Module):
             src_features, dst, dim=0, dim_size=num_nodes
         )  # (N, in_channels)
 
-        # apply node weight to neighbourhood aggregation 
+        # apply node weight to neighbourhood aggregation
         # Node attr alread has been masked out
         if node_weight is not None:
             aggregated = aggregated * node_weight.unsqueeze(1)
@@ -209,9 +305,7 @@ class SAGELayer(nn.Module):
 
 
 class PairedSAGELayer(nn.Module):
-    """
-    Edge aggregation for node embdeddings, followed by node neighbourhood aggregation
-    """
+    """Edge aggregation for node embdeddings, followed by node neighbourhood aggregation"""
 
     def __init__(self, edge_features: int, in_channels: int, out_channels: int):
         super().__init__()

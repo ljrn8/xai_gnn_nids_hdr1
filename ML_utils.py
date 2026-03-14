@@ -14,10 +14,36 @@ from loguru import logger
 import torch
 import torch.nn.functional as F
 from pathlib import Path
+from sklearn.metrics import roc_auc_score, f1_score, recall_score, precision_score
+from sklearn.metrics import precision_recall_curve, auc
+import torch
 
-DEBUG = 0
-init()  # colour logs
-device = "cpu"
+device = 'cpu'
+
+def get_metrics(y_true: torch.Tensor, y_pred_probs: torch.Tensor):
+    y_pred = y_pred_probs > 0.5
+    P, R = (
+        precision_score(y_true, y_pred, pos_label=1),
+        recall_score(y_true, y_pred, pos_label=1),
+    )
+    precision, recall, _ = precision_recall_curve(
+        y_true, y_pred_probs.detach().numpy(), pos_label=1
+    )
+    pr_auc = auc(recall, precision)
+    F1 = 2 * P * R / (P + R) if P + R > 0 else 0.0
+    return (pr_auc, roc_auc_score(y_true, y_pred_probs.detach().numpy()), F1, P, R)
+
+
+def write_metrics(
+    y_trues: torch.Tensor, y_probs: torch.Tensor, writer, epc, av_loss, train_category: bool
+):
+    all_metrics = get_metrics(y_trues, y_probs)
+    pr_auc, roc_auc, f1, prec, rec = all_metrics
+    metrics = {"PR-AUC": pr_auc, "ROC-AUC": roc_auc, "F1": f1, "PREC": prec, "rec": rec, 'avg_loss': av_loss}
+    istrain = "TRAIN" if train_category else "TEST"
+    for metric_name, metric in metrics.items():
+        writer.add_scalar(f"all/{metric_name}_{istrain}", metric, epc)
+    return all_metrics
 
 
 def most_recent_object(exp_dir):
@@ -25,28 +51,6 @@ def most_recent_object(exp_dir):
     exp_dir = max(exp_dirs, key=lambda d: d.stat().st_ctime)
     logger.info(f"Using newest experiment directory: {exp_dir}")
     return Path(exp_dir)
-
-
-def debug(message, **kwargs):
-    log(message, **kwargs, debug=True, c="red")
-
-
-def log(message, c=None, debug=False, lstrip=False):
-    fore_col = Fore.__getattribute__(c.upper()) if c else ""
-    reset = Style.RESET_ALL if c else ""
-    if lstrip:
-        new_message = ""
-        for line in message.split("\n"):
-            if len(line.strip()) < 1:
-                continue
-            new_message += line.lstrip() + "\n"
-        message = new_message[:-1]  # remove last line break
-
-    if not DEBUG and debug:
-        return  # skip without debug option
-
-    debug_prefix = "DEBUG" if debug and DEBUG else ""
-    print(f"{fore_col} > {debug_prefix} LOG: {message} {reset}", flush=True)
 
 
 def fidelities(y_pred, y_mask, y_imask, y):
@@ -72,58 +76,6 @@ def eval_graph(model, test_graph, loss_fn, y_test):
         out = model(test_graph.x.to(device), test_graph.edge_index.to(device))
     y_test
     return (loss_fn(out, y_test), out, y_test)
-
-
-def epoch(
-    model, flows, loss_fn, optimizer=None, evaluate_instead=False, window_size=500
-):
-    """
-    Assumes 'flows' has columns src and dst for edge construction,
-    and 'Attack' for labels (float).
-    """
-    if not optimizer:
-        optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
-
-    n_flows = len(flows)
-    losses, ys, ypreds = [], [], []
-    for i, start in enumerate(
-        tqdm(range(0, n_flows - 1, window_size)),
-    ):
-        window_flows = flows.iloc[start : start + window_size]
-        window_graph, node_map = graph_encode(
-            window_flows,
-            linegraph=True,  # ! uses linegraphs
-            edge_cols=["src", "dst"],
-            target_col="Attack",
-        )
-
-        if evaluate_instead:
-            loss, out, y = eval_graph(model, window_graph, loss_fn=loss_fn)
-        else:
-            loss, out, y = train_graph(model, window_graph, optimizer, loss_fn=loss_fn)
-
-        losses.append(loss)
-        ys.append(y)
-        ypreds.append(out.argmax(dim=1))
-
-    return losses, sum(losses) / len(losses), ys, ypreds
-
-
-def yield_subgraphs(flows, window, target_col="Attack", linegraph=True):
-    for start in range(0, len(flows) - 1, window):
-        window_flows = flows.iloc[start : start + window].copy()
-        debug(
-            f"window computed [{start}:{start+window}]. mal flows: {sum(window_flows.Attack)}"
-        )
-        # y = deepcopy(window_flows.Attack.values)
-        # window_flows.drop('Attack', axis=1, inplace=True)
-        window_graph, _ = graph_encode(
-            window_flows,
-            linegraph=linegraph,
-            edge_cols=["src", "dst"],
-            target_col=target_col,
-        )
-        yield window_graph
 
 
 def graph_encode(data, edge_cols: list, linegraph: bool, target_col: str = None):
