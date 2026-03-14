@@ -158,15 +158,13 @@ class EdgeSAGELayer(nn.Module):
             edge_attr, target_indices, dim=0, dim_size=num_nodes  # (W, 10)  # (W)
         )
 
+        # apply node weights to neighbourhood aggregation
+        # (node attr already has the mask applied)
+        if node_weight is not None:
+            edge_aggregated_mean = edge_aggregated_mean * node_weight.unsqueeze(1)
+
         node_edge_concat_embs = torch.cat([node_attr, edge_aggregated_mean], dim=1)
         new_node_embeddings = torch.relu(self.W(node_edge_concat_embs))
-
-        # apply node weights AFTER neighbourhood aggregation
-        if node_weight is not None:
-            assert (
-                node_weight.shape[0] == new_node_embeddings.shape[0]
-            ), f"bad weight shape in forward, not {new_node_embeddings.shape[0]}"
-            new_node_embeddings = new_node_embeddings * node_weight.unsqueeze(1)
 
         assert new_node_embeddings.shape[0] == node_attr.shape[0]
         return new_node_embeddings
@@ -196,14 +194,16 @@ class SAGELayer(nn.Module):
             src_features, dst, dim=0, dim_size=num_nodes
         )  # (N, in_channels)
 
+        # apply node weight to neighbourhood aggregation 
+        # Node attr alread has been masked out
+        if node_weight is not None:
+            aggregated = aggregated * node_weight.unsqueeze(1)
+
         # concatenate each node's own features with its aggregated neighbourhood
         node_concat = torch.cat([node_attr, aggregated], dim=1)  # (N, in_channels * 2)
 
         # apply linear transform
         new_node_embeddings = torch.relu(self.W(node_concat))  # (N, out_channels)
-
-        if node_weight is not None:
-            new_node_embeddings = new_node_embeddings * node_weight.unsqueeze(1)
 
         return new_node_embeddings
 

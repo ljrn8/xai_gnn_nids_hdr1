@@ -7,7 +7,7 @@ env
 .venv
 archive
 tensorboard_venv
-
+run.sh
 
 ### automated :
 
