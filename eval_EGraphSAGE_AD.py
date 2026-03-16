@@ -21,6 +21,7 @@ from loguru import logger
 from ML_utils import graph_encode
 
 
+
 def get_metrics(y_true: torch.Tensor, y_pred_probs: torch.Tensor, threshold=0.5):
     y_pred = y_pred_probs > threshold
     P, R = (
@@ -42,6 +43,9 @@ def most_recent_object(exp_dir):
 
 
 # ----- SCRIPT ------
+
+# !! why is this evaluation script giving contradictory results (eg Binary vs classwise)
+
 
 import argparse
 
@@ -80,7 +84,7 @@ with open(exp_dir / "experiment.pkl", "rb") as f:
 test_csv = Path(cfg["test_df_location"])
 
 # Rebuild model
-with open(exp_dir / "best_model.pkl", "rb") as f:
+with open(exp_dir / "current_model.pkl", "rb") as f:
     model = pickle.load(f)
 model.to(device)
 model.eval()
@@ -108,13 +112,9 @@ G, _ = graph_encode(
 )
 with torch.no_grad():
     loss, y, y_probs, emb = model.pass_flowgraph(
-        G, criterion, optimizer=None, train=False
+        G, criterion, optimizer=None, train_now=False
     )
 
-y_true_bin = y_probs > 0.5
-y_true_bin = np.array(y_true_bin)
-y_probs = np.array(y_probs)
-logger.debug(f"start of y_probs: {y_probs[:10]}")
 
 # histogram of predicted probabilities
 plt.figure()
@@ -124,12 +124,14 @@ plt.show()
 plt.clf()
 
 # get the best threshhold
-candidate_threshholds = np.linspace(0, 1, 500)
+# candidate_threshholds = np.linspace(0, 1, 500)
 best_f1 = 0
 best_thresh = 0.5
+# logger.info(f"Best threshold: {best_thresh:.4f} with F1: {best_f1:.4f}")
 print("!!! not serching for thershold, using 0.5 !!!")
 
-logger.info(f"Best threshold: {best_thresh:.4f} with F1: {best_f1:.4f}")
+y_probs = np.array(y_probs)
+
 logger.info(
     "n of mal edges edges predicted with threshold: {}".format(
         (y_probs > best_thresh).sum()
@@ -139,6 +141,7 @@ y_pred_bin = (y_probs > best_thresh).astype(int)
 
 # 1. Binary Evaluation
 print("\n===== BINARY (Benign vs Malicious) =====")
+y_true_bin = y.cpu().numpy()
 print(
     f"results from previous function in the order of (PR-AUC, ROC-AUC, F1, Precision, Recall) : {get_metrics(y_true_bin, y_probs)}"
 )

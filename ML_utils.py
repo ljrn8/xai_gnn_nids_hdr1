@@ -31,7 +31,8 @@ def get_metrics(y_true: torch.Tensor, y_pred_probs: torch.Tensor):
     )
     pr_auc = auc(recall, precision)
     F1 = 2 * P * R / (P + R) if P + R > 0 else 0.0
-    return (pr_auc, roc_auc_score(y_true, y_pred_probs.detach().numpy()), F1, P, R)
+    return (pr_auc, roc_auc_score(y_true, y_pred_probs.detach().numpy()), 
+            F1, P, R)
 
 
 def write_metrics(

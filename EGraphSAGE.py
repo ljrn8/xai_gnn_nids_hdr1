@@ -102,14 +102,16 @@ class EGraphSAGE(nn.Module):
         optimizer,
         edge_weight=None,
         node_weight=None,
-        train=True,
+        train_now=True,
         device="cpu",
         debug=True,
     ):
-        if train:
+        """Pass a single flow graph, for training, later training or evaluation
+        Returns: loss (val), y (Tensor), probs (Tensor), embeddings (Tensor)
+        """
+        if train_now:
+            self.train()
             optimizer.zero_grad()
-        else:
-            self.eval()
 
         logits, emb, _ = self.forward(
             G.edge_attr, G.edge_index, edge_weight=edge_weight, node_weight=node_weight
@@ -117,6 +119,7 @@ class EGraphSAGE(nn.Module):
         probs = torch.sigmoid(logits)
         y = G.y.to(device).float()
         loss = criterion(logits, y)
+
         if debug:
             logger.debug(
                 f"Graph pass done: edge index shape {G.edge_index.shape} edge_attr shape {G.edge_attr.shape}"
@@ -125,25 +128,40 @@ class EGraphSAGE(nn.Module):
             logger.debug(f"y unique = {np.unique(y, return_counts=True)}")
             logger.debug(f"probs average = {torch.mean(probs)}")
 
-        if train:
+        if train_now:
             loss.backward()
             optimizer.step()
 
         return loss, y, probs, emb
 
-    def pass_flow_windows(self, flow_generator, n_windows=None, **kwargs):
-        """pass flow graphs from flow generator, with kwargs for pass_flowgraph"""
-        window_losses, ys, probs = [], [] ,[]      
+    def pass_flow_windows(self, flow_generator, n_windows=None, optimizer=None, train=True, **kwargs):
+        """pass flow graphs from flow generator, with kwargs for pass_flowgraph using batch gradient descent (*NOT SGD)
+        Returns (Tensors): Average loss, hstacked losses per windows, y and output probabilities
+        """
+        if train:
+            self.train()
+            optimizer.zero_grad()
+
+        window_losses, ys, probs = [], [] ,[]    
         for train_window in tqdm(flow_generator, total=n_windows):
             G, _ = graph_encode(train_window, edge_cols=['src', 'dst'], 
                                 linegraph=False, target_col='Attack')
-            loss, y, prob, _ = self.pass_flowgraph(G=G, **kwargs)
+            loss, y, prob, _ = self.pass_flowgraph(G=G, train_now=False, 
+                                                   optimizer=optimizer, **kwargs)
             window_losses.append(loss)
             ys.append(y)
             probs.append(prob)
+            # acc gradients, dont update untill afterwards
+            if train:
+                loss.backward() 
+
             del G
 
-        return [torch.hstack(m) for m in (window_losses, ys, probs)]
+        if train:
+            optimizer.step()
+
+        av_loss = torch.hstack(window_losses).mean()
+        return [av_loss] + [torch.hstack(m) for m in (window_losses, ys, probs)]
 
     def train_flows(
         self,
@@ -167,11 +185,10 @@ class EGraphSAGE(nn.Module):
         for epc, test_flow_iter, train_flow_iter in zip(
             range(1, epochs - 1), test_iterators, train_iterators
         ):
-
             # ----- TRAIN -----
             logger.info("training...")
             self.train()
-            window_losses, y, probs = self.pass_flow_windows(
+            av_loss, window_losses, y, probs = self.pass_flow_windows(
                 train_flow_iter, 
                 criterion=criterion,
                 optimizer=optimizer,
@@ -179,9 +196,8 @@ class EGraphSAGE(nn.Module):
                 n_windows=n_train_windows
             )
 
-            avg_train_loss = torch.mean(window_losses)
             train_pr_auc, train_roc_auc, train_f1, prec, rec = write_metrics(
-                y, probs, writer, epc, avg_train_loss, train_category=True
+                y, probs, writer, epc, av_loss, train_category=True
             )
             writer.add_scalar(f"PosRate/Train/MeanProb", torch.mean(probs), epc)
             writer.add_histogram(f"Probs/Train/probs_hist", probs, epc)
@@ -190,36 +206,33 @@ class EGraphSAGE(nn.Module):
             logger.info("testing...")
             self.eval()
             with torch.no_grad():
-                test_window_losses, test_y, test_probs = self.pass_flow_windows(
+                av_test_loss, test_window_losses, test_y, test_probs = self.pass_flow_windows(
                     flow_generator=test_flow_iter, 
                     criterion=criterion,
                     optimizer=None,
                     train=False,
                 )
-                avg_test_loss = torch.mean(test_window_losses)
                 pr_auc, roc_auc, f1, prec, rec = write_metrics(
-                    test_y, test_probs, writer, epc, avg_test_loss, train_category=False
+                    test_y, test_probs, writer, epc, av_test_loss, train_category=False
                 )
                 writer.add_scalar(f"PosRate/Test/MeanProb", torch.mean(test_probs), epc)
                 writer.add_histogram(f"Probs/Test/probs_hist", test_probs, epc)
 
             logger.info(
                 f"Epoch {epc:02d} \n"
-                f"Av Window Train Loss: {avg_train_loss:.4f} \n"
-                f"Av Window Test loss: {avg_test_loss:.4f} \n"
-                f"Test PR AUC: {pr_auc:.4f} \n"
-                f"Train PR AUC: {train_pr_auc:.4f} \n"
-                f"Test ROC AUC: {roc_auc:.4f} \n"
+                f"Train Av Window Loss: {av_loss:.4f} \n"
                 f"Train ROC AUC: {train_roc_auc:.4f} \n"
-                f"Test F1: {f1:.4f} \n"
+                f"Train PR AUC: {train_pr_auc:.4f} \n"
                 f"Train F1: {train_f1:.4f} \n"
+                '--\n'
+                f"Test Av Window loss: {av_test_loss:.4f} \n"
+                f"Test ROC AUC: {roc_auc:.4f} \n"
+                f"Test PR AUC: {pr_auc:.4f} \n"
+                f"Test F1: {f1:.4f} \n"
             )
 
-            # save current model (warning: may overfit)
-            torch.save(self.state_dict(), experimental_directory / f"current_model.pt")
-
             # also try saving ws pickle (weight issue with custom model?)
-            with open(experimental_directory / "best_model.pkl", "wb") as f:
+            with open(experimental_directory / "current_model.pkl", "wb") as f:
                 pickle.dump(self, f)
 
             # Write Metadata 

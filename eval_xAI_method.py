@@ -13,34 +13,39 @@ from pathlib import Path
 from EGraphSAGE import EGraphSAGE
 import argparse
 from tqdm import tqdm
+from N_PGExplainer import N_PGExplainer
 
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--experiment-pickle", default=most_recent_object("./interm/xAI"))
-parser.add_argument("--output-figures-directory", default="figures/xAI_graphs")
+parser.add_argument("--xAI-output-directory", default=most_recent_object("./interm/xAI"))
+parser.add_argument("--output-directory", default="figures/xAI_graphs")
 parser.add_argument("--skip-show-graphs", action='store_true')
+parser.add_argument("--best-mask", action='store_true')
 args = parser.parse_args()
 skip = args.skip_show_graphs
 
+# -- extract xAI experiment (model, data, mask and losses)
+
 # load experiment
-with open(args.experiment_pickle, "rb") as f:
-    explainability_report = pickle.load(f)
+pkl = 'best_mask.pkl' if args.best_mask else 'current_mask.pkl'
+with open(Path(args.xAI_output_directory) / pkl, "rb") as f:
+    run = pickle.load(f)
 
 # load test data from experiment metadata
-test_f = explainability_report["test_f"]
+test_f = run["info"]['test_f']
 test_flows = pd.read_csv(test_f)
 
 # load model from experiment metadata
-with open(Path(explainability_report["model_dir"]), "rb") as f:
+with open(Path(run["info"]["model_dir"]), "rb") as f:
     model = pickle.load(f)
 
-losses, reg_losses = (
-    explainability_report["results"]["losses"],
-    explainability_report["results"]["mask_regularization"],
-)
+losses, regs = run['losses'], run['mask_regularization']
 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-figures_output = args.output_digures_directory / timestamp
+figures_output = Path(args.output_directory) / timestamp
 figures_output.mkdir(exist_ok=True, parents=True)
+
+
+# -- plot basic mask info
 
 plt.figure(figsize=(4, 4))
 plt.plot(losses)
@@ -49,18 +54,39 @@ plt.savefig(figures_output / "loss.png")
 if not skip: plt.show()
 else: plt.clf()
 
+entr_reg, mean_reg, mlp_l1_reg = [
+    [r[i].detach() for r in regs] for i in range(3)
+]
+
 plt.figure(figsize=(4, 4))
-plt.plot(reg_losses)
-plt.title("reg loss")
-plt.savefig(figures_output / "reg losses.png")
+plt.plot(entr_reg)
+plt.title("entropy regularization")
+plt.savefig(figures_output / "entropy regularization.png")
 if not skip: plt.show()
 else: plt.clf()
 
-mask = explainability_report["results"]["mask"].detach().numpy()
+plt.figure(figsize=(4, 4))
+plt.plot(mean_reg)
+plt.title("mean regularization")
+plt.savefig(figures_output / "mean regularization.png")
+if not skip: plt.show()
+else: plt.clf()
+
+plt.figure(figsize=(4, 4))
+plt.plot(mlp_l1_reg)
+plt.title("MLP L1 regularization")
+plt.savefig(figures_output / "MLP L1 regularization.png")
+if not skip: plt.show()
+else: plt.clf()
+
+mask = run["node_mask"].detach().numpy()
 plt.hist(mask, bins=500)
 plt.savefig(figures_output / "mask hist.png")
 if not skip: plt.show()
 else: plt.clf()
+
+
+# -- sparsity variation graphs
 
 # convert test_flows Attack to binary
 test_flows["Attack"] = torch.Tensor(
@@ -71,22 +97,30 @@ G, _ = graph_encode(
 )
 
 # normal predictions reference
-y_pred, _ = model.forward(
+y_pred, _, _ = model.forward(
     G.edge_attr,
     G.edge_index,
 )
 
-# sparsity variation graphs
 sparsities = np.arange(0, 1.0, 0.02)
 fps, fms, threshes = [], [], []
 for s in tqdm(sparsities, desc=f"Evaluating masks at spasities"):
+
     # threshold = np.percentile(mask, s * 100)
     threshold = np.percentile(mask, (1 - s) * 100)
+    binary_mask = torch.FloatTensor(mask > threshold)
 
-    # can use non differnetiable threshholding here
-    binary_edge_mask = torch.FloatTensor(mask > threshold)
-    masked_edge_attr = G.edge_attr * binary_edge_mask.unsqueeze(1)
-    masked_y_pred, _ = model.forward(
+    # if run['node_mask']:
+    if True: # ! temparary
+        # if using a node mask, compute the edge mask is computed from the highest node value
+        # ! this produces a far denser edge mask
+        src, dst = G.edge_index
+        binary_mask = torch.max(
+                binary_mask[src], binary_mask[dst]
+            )
+
+    masked_edge_attr = G.edge_attr * binary_mask.unsqueeze(1)
+    masked_y_pred, _, _ = model.forward(
         masked_edge_attr,
         G.edge_index,
     )
