@@ -1,0 +1,76 @@
+#!/bin/bash
+
+########################
+# CICIDS
+
+# DONE
+# python train_EGraphSAGE.py \
+# 	--epochs 20 --lr 0.01 \
+# 	--train-flows interm/cicids_processed_train.csv \
+# 	--test-flows interm/cicids_processed_test.csv \
+# 	--num_layers 1 --layer-size 256 \
+# 	--run-dir output/CICIDS
+
+# DONE
+# python eval_EGraphSAGE_AD.py --run-dir output/CICIDS
+
+# DONE
+# python N_PGExplainer.py \
+# 	--run-dir output/CICIDS \
+# 	--epochs 20 --learning-rate 0.01 \
+# 	--node-entropy-reg 0.05 --node-sum-reg 0.1 \
+# 	--lasso-reg 0.005 --subgraph-samples 10 --tau 0.5 \
+# 	--explaination-dir output/CICIDS/npge
+
+python eval_xAI_method.py \
+	--xAI-run-dir output/CICIDS/npge \
+	--eval-dir output/CICIDS/npge/eval \
+	# --skip-show-graphs
+
+# python L_PGExplainer.py \
+# 	--run-dir output/CICIDS \
+# 	--epochs 20 --learning-rate 0.01 \
+# 	--node-entropy-reg 0.05 --node-sum-reg 0.3 \
+# 	--lasso-reg 0.005 --subgraph-samples 10 --tau 0.5 \
+# 	--explaination-dir output/CICIDS/lpge
+
+# python eval_xAI_method.py \
+# 	--xAI-run-dir output/CICIDS/lpge \
+# 	--eval-dir output/CICIDS/lpge/eval \
+# 	--skip-show-graphs
+
+# ########################
+# # NoT-IoT
+
+# python train_EGraphSAGE.py \
+# 	--epochs 20 --lr 0.01 \
+# 	--train-flows interm/NoT-IoT_processed_train.csv \
+# 	--test-flows interm/NoT-IoT_processed_test.csv \
+# 	--num_layers 1 --layer-size 256 \
+# 	--run-dir output/NoT-IoT
+
+# python eval_EGraphSAGE_AD.py --run-dir output/NoT-IoT
+
+# python N_PGExplainer.py \
+# 	--run-dir output/NoT-IoT \
+# 	--epochs 20 --learning-rate 0.01 \
+# 	--node-entropy-reg 0.05 --node-sum-reg 0.3 \
+# 	--lasso-reg 0.005 --subgraph-samples 10 --tau 0.5 \
+# 	--explaination-dir output/NoT-IoT/npge
+
+# python eval_xAI_method.py \
+# 	--xAI-run-dir output/NoT-IoT/npge \
+# 	--eval-dir output/NoT-IoT/npge/eval \
+# 	--skip-show-graphs
+
+# python L_PGExplainer.py \
+# 	--run-dir output/NoT-IoT \
+# 	--epochs 20 --learning-rate 0.01 \
+# 	--node-entropy-reg 0.05 --node-sum-reg 0.3 \
+# 	--lasso-reg 0.005 --subgraph-samples 10 --tau 0.5 \
+# 	--explaination-dir output/NoT-IoT/lpge
+
+# python eval_xAI_method.py \
+# 	--xAI-run-dir output/NoT-IoT/lpge \
+# 	--eval-dir output/NoT-IoT/lpge/eval \
+# 	--skip-show-graphs

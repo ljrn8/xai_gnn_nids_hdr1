@@ -321,11 +321,13 @@ class N_PGExplainer(nn.Module):
         return (mask, losses, mask_regularization)
 
 
+
 def main(args):
     logger.info(f"running with args: {args}")
     device = args.device
-    run_dir = Path(args.run_directory)
 
+    # open EgraphSAGE run     
+    run_dir = Path(args.run_dir)
     with open(run_dir / "experiment.pkl", "rb") as f:
         run_info = pickle.load(f)
 
@@ -334,6 +336,7 @@ def main(args):
     test_f = Path(run_info["test_df_location"])
     test_flows = pd.read_csv(test_f)
 
+    # downsample of prototyping
     downsample = args.prototype_downsample_rate
     if downsample is not None:
         logger.warning('downsampling flows will ruin temporal continguency')
@@ -350,11 +353,13 @@ def main(args):
     model_dir = run_dir / "current_model.pkl"
     with open(model_dir, "rb") as f:
         model = pickle.load(f)
-
     model.to(device)
 
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    metrics_output_dir = Path(args.output_directory) / timestamp
+    # setup up explaination directory
+    metrics_output_dir = Path(args.explaination_dir) 
+    if args.add_timestamp_subfolder:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        metrics_output_dir = metrics_output_dir / timestamp
     metrics_output_dir.mkdir(parents=True, exist_ok=True)
 
     logger.info("encoding graph")
@@ -375,7 +380,7 @@ def main(args):
 
     experimental_output = {
         "model": model,
-        "node_mask": True,
+        "mask_type": "node",
         "explainer": explainer,
         "args": args,
         "model_dir": model_dir,
@@ -396,26 +401,26 @@ def main(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("-e", "--epochs", default=50, type=int)
-    parser.add_argument("-lr", "--learning-rate", default=0.01, type=float)
-    parser.add_argument("-ner", "--node-entropy-reg", default=0.05, type=float)
-    parser.add_argument("-nsr", "--node-sum-reg", default=0.3, type=float)
-    parser.add_argument("-l", "--lasso-reg", default=0.005, type=float)
-    parser.add_argument("-s", "--subgraph-samples", default=10, type=int)
-    parser.add_argument("-t", "--tau", default=0.5, type=float)
+    parser.add_argument("-e", "--epochs",               default=50, type=int)
+    parser.add_argument("-lr", "--learning-rate",       default=0.01, type=float)
+    parser.add_argument("-ner", "--node-entropy-reg",   default=0.05, type=float)
+    parser.add_argument("-nsr", "--node-sum-reg",       default=0.05, type=float)
+    parser.add_argument("-l", "--lasso-reg",            default=0.005, type=float)
+    parser.add_argument("-s", "--subgraph-samples",     default=10, type=int)
+    parser.add_argument("-t", "--tau",                  default=0.5, type=float)
     parser.add_argument("--device", default="cpu")
     parser.add_argument('--prototype-downsample-rate', default=None, type=float)
     parser.add_argument(
         "-p", "--parameters", help="number of parameters in MLP", default=64, type=int
     )
     parser.add_argument(
-        "--run-directory",
-        # default=most_recent_object("interm/runs"),
-        default='./interm/runs/EGraphSAGE_AD_cicids_processed_train_20260316_043500'
+        "--run-dir",
     )
     parser.add_argument(
-        "--output-directory",
-        default="interm/xAI",
+        "--explaination-dir"
+    )
+    parser.add_argument(
+        "--add-timestamp-subfolder", action="store_true", help="Add a timestamp subfolder to the explanation directory"
     )
     main(parser.parse_args())
 

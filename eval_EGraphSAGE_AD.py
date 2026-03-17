@@ -21,7 +21,6 @@ from loguru import logger
 from ML_utils import graph_encode
 
 
-
 def get_metrics(y_true: torch.Tensor, y_pred_probs: torch.Tensor, threshold=0.5):
     y_pred = y_pred_probs > threshold
     P, R = (
@@ -33,7 +32,6 @@ def get_metrics(y_true: torch.Tensor, y_pred_probs: torch.Tensor, threshold=0.5)
     F1 = 2 * P * R / (P + R) if P + R > 0 else 0.0
     return (pr_auc, roc_auc_score(y_true, y_pred_probs), F1, P, R)
 
-
 def most_recent_object(exp_dir):
     """tensorboard log directory (most recently created in interm/runs)"""
     exp_dirs = list(Path(exp_dir).glob("*"))
@@ -42,40 +40,35 @@ def most_recent_object(exp_dir):
     return exp_dir
 
 
-# ----- SCRIPT ------
-
-# !! why is this evaluation script giving contradictory results (eg Binary vs classwise)
-
+# ----- Setup
 
 import argparse
 
 parser = argparse.ArgumentParser()
-parser.add_argument(
-    "-tf",
-    "--test-flows-csv",
-    default="interm/unsw_nb15_processed_test.csv",
-    help="location of processsed test flow dataset (numeric only), requiring src, dst and Attack columns",
-)
-parser.add_argument(
-    "-e",
-    "--experimental-directory",
-    default="newest",
-)
+parser.add_argument("--run-dir", default=None)
 parser.add_argument("--nrows-test", default=None, type=int)
+parser.add_argument("--eval-dir", default=None, type=str)
 args = parser.parse_args()
 
-exp_dir: Path = Path(args.experimental_directory)
-if exp_dir == Path("newest"):
-    exp_dir = most_recent_object(Path("interm/runs"))
+# input directory
+if args.run_dir is None:
+    logger.warning('no run dir provided, using most recent in "interm/runs"')
+    exp_dir = most_recent_object("interm/runs")
 else:
-    if not exp_dir.exists():
-        raise ValueError(f"Experiment directory {exp_dir} does not exist.")
+    exp_dir: Path = Path(args.run_dir)
     logger.info(f"Using specified experiment directory: {exp_dir}")
+
+# output directory (defaults to experiment/eval)
+if args.eval_dir is None:
+    eval_dir = exp_dir / "eval"
+else:
+    eval_dir = Path(args.eval_dir)
+
+eval_dir.mkdir(exist_ok=True)
+logger.info(f"Evaluation results will be saved to: {eval_dir}")
 
 device = "cpu"
 logger.info(f"Experiment directory: {exp_dir}")
-figures = Path("figures") / "EgraphSAGE" / exp_dir.name
-figures.mkdir(exist_ok=True)
 
 # Load experiment metadata
 with open(exp_dir / "experiment.pkl", "rb") as f:
@@ -106,7 +99,9 @@ test_flows["Attack"] = torch.Tensor(
 # Dummy criterion (not used in eval)
 criterion = torch.nn.BCEWithLogitsLoss()
 
-# Eval
+
+# -- Binary Evaluation
+
 G, _ = graph_encode(
     test_flows, edge_cols=["src", "dst"], linegraph=False, target_col="Attack"
 )
@@ -114,7 +109,6 @@ with torch.no_grad():
     loss, y, y_probs, emb = model.pass_flowgraph(
         G, criterion, optimizer=None, train_now=False
     )
-
 
 # histogram of predicted probabilities
 plt.figure()
@@ -149,6 +143,8 @@ print("ROC AUC:", roc_auc_score(y_true_bin, y_probs))
 precision, recall, _ = precision_recall_curve(y_true_bin, y_probs)
 print("PR AUC:", auc(recall, precision))
 print(classification_report(y_true_bin, y_pred_bin, digits=4))
+with open(eval_dir / "classification_report.txt", "w") as f:
+    f.write(classification_report(y_true_bin, y_pred_bin, digits=4))
 
 # ROC
 fpr, tpr, _ = roc_curve(y_true_bin, y_probs)
@@ -158,7 +154,7 @@ plt.title("ROC Curve (Binary)")
 plt.xlabel("FPR")
 plt.ylabel("TPR")
 plt.grid()
-plt.savefig(figures / "ROC Curve (Binary).png")
+plt.savefig(eval_dir / "ROC Curve (Binary).png")
 plt.clf()
 
 # PR
@@ -169,7 +165,7 @@ plt.title("PR Curve (Binary)")
 plt.xlabel("Recall")
 plt.ylabel("Precision")
 plt.grid()
-plt.savefig(figures / "PR Curve (Binary).png")
+plt.savefig(eval_dir / "PR Curve (Binary).png")
 plt.clf()
 
 # Histogram
@@ -178,11 +174,12 @@ plt.hist(y_probs, bins=50)
 plt.title("Prediction Probability Distribution")
 plt.xlabel("Predicted Probability")
 plt.ylabel("Count")
-plt.savefig(figures / "Prediction Probability Distribution.png")
+plt.savefig(eval_dir / "Prediction Probability Distribution.png")
 plt.clf()
 
 
-# 2. Per-Attack One-vs-Benign
+# --- Per class evaluation
+
 print("\n===== PER ATTACK TYPE (Benign vs Attack X) =====")
 
 unique_attacks = np.unique(attack_labels)
@@ -205,6 +202,8 @@ for attack in unique_attacks:
     precision, recall, _ = precision_recall_curve(y_true_attack, y_probs_attack)
     print("PR AUC:", auc(recall, precision))
     print(classification_report(y_true_attack, y_pred_attack, digits=4))
+    with open(eval_dir / f"classification_report_{attack}.txt", "w") as f:
+        f.write(classification_report(y_true_attack, y_pred_attack, digits=4))
 
     # ROC
     fpr, tpr, _ = roc_curve(y_true_attack, y_probs_attack)
@@ -214,7 +213,7 @@ for attack in unique_attacks:
     plt.xlabel("FPR")
     plt.ylabel("TPR")
     plt.grid()
-    plt.savefig(figures / f"ROC - {attack}.png")
+    plt.savefig(eval_dir / f"ROC - {attack}.png")
     plt.clf()
 
     # PR
@@ -225,7 +224,7 @@ for attack in unique_attacks:
     plt.xlabel("Recall")
     plt.ylabel("Precision")
     plt.grid()
-    plt.savefig(figures / f"PR - {attack}.png")
+    plt.savefig(eval_dir / f"PR - {attack}.png")
     plt.clf()
 
     # Histogram
@@ -234,7 +233,7 @@ for attack in unique_attacks:
     plt.title(f"Probability Distribution - {attack}")
     plt.xlabel("Predicted Probability")
     plt.ylabel("Count")
-    plt.savefig(figures / f"Probability Distribution - {attack}.png")
+    plt.savefig(eval_dir / f"Probability Distribution - {attack}.png")
     plt.clf()
 
     logger.info(f"finished eval for experiment {exp_dir}")

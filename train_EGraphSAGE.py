@@ -27,15 +27,17 @@ parser.add_argument("--train-flows",        default="interm/unsw_nb15_processed_
 parser.add_argument("--test-flows",         default="interm/unsw_nb15_processed_test.csv")
 parser.add_argument("--device",             default="cpu")
 parser.add_argument("--run-directory",      default="interm/runs")
+parser.add_argument("--add-timestamp-subfolder",   action='store_true')
 args = parser.parse_args()
 logger.info(f"using args: {args}")
-run_ID = f"EGraphSAGE_AD_{Path(args.train_flows).stem}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
 channels = [args.layer_size] * args.num_layers
 
 logger.info(f"Using data from {args.train_flows}, {args.test_flows}...", c="blue")
 
 # experimental directory
-exp_dir = Path(args.run_directory) / run_ID
+exp_dir = Path(args.run_directory) 
+if args.add_timestamp_subfolder:
+    exp_dir = exp_dir / datetime.now().strftime('%Y%m%d_%H%M%S')
 exp_dir.mkdir(parents=True, exist_ok=True)
 log_dir = exp_dir / "run.log"
 log_dir.touch()
@@ -53,8 +55,6 @@ model = EGraphSAGE(**model_kwargs)
 logger.info(f"MODEL SUMMARY: ", model)
 for layer in model.layers:
     logger.info(layer)
-
-
 
 # meta data
 experiment_summary = {
