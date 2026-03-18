@@ -18,7 +18,8 @@ from sklearn.metrics import roc_auc_score, f1_score, recall_score, precision_sco
 from sklearn.metrics import precision_recall_curve, auc
 import torch
 
-device = 'cpu'
+device = "cpu"
+
 
 def get_metrics(y_true: torch.Tensor, y_pred_probs: torch.Tensor):
     y_pred = y_pred_probs > 0.5
@@ -31,16 +32,27 @@ def get_metrics(y_true: torch.Tensor, y_pred_probs: torch.Tensor):
     )
     pr_auc = auc(recall, precision)
     F1 = 2 * P * R / (P + R) if P + R > 0 else 0.0
-    return (pr_auc, roc_auc_score(y_true, y_pred_probs.detach().numpy()), 
-            F1, P, R)
+    return (pr_auc, roc_auc_score(y_true, y_pred_probs.detach().numpy()), F1, P, R)
 
 
 def write_metrics(
-    y_trues: torch.Tensor, y_probs: torch.Tensor, writer, epc, av_loss, train_category: bool
+    y_trues: torch.Tensor,
+    y_probs: torch.Tensor,
+    writer,
+    epc,
+    av_loss,
+    train_category: bool,
 ):
     all_metrics = get_metrics(y_trues, y_probs)
     pr_auc, roc_auc, f1, prec, rec = all_metrics
-    metrics = {"PR-AUC": pr_auc, "ROC-AUC": roc_auc, "F1": f1, "PREC": prec, "rec": rec, 'avg_loss': av_loss}
+    metrics = {
+        "PR-AUC": pr_auc,
+        "ROC-AUC": roc_auc,
+        "F1": f1,
+        "PREC": prec,
+        "rec": rec,
+        "avg_loss": av_loss,
+    }
     istrain = "TRAIN" if train_category else "TEST"
     for metric_name, metric in metrics.items():
         writer.add_scalar(f"all/{metric_name}_{istrain}", metric, epc)

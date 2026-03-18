@@ -18,8 +18,7 @@ from ML_utils import most_recent_object
 
 
 class N_PGExplainer(nn.Module):
-    """PGExplainer adapted for link prediction on network flows (node mask)
-    """
+    """PGExplainer adapted for link prediction on network flows (node mask)"""
 
     MODEL_PRED_THRESHOLD = 0.5
     IMPIRICAL_SAMPLING = False
@@ -114,9 +113,7 @@ class N_PGExplainer(nn.Module):
 
         return masked_y_pred_mean
 
-    def approximate_subgraph_BCD_with_prior_masking(
-        self, G, node_mask_logits
-    ):
+    def approximate_subgraph_BCD_with_prior_masking(self, G, node_mask_logits):
         """returns average logits
         uses G.x * mask once, using max(node mask) for the edge mask, not masking the message passing layers at all
         """
@@ -172,7 +169,16 @@ class N_PGExplainer(nn.Module):
         params = torch.cat([p.view(-1) for p in self.mlp.parameters()])
         return params.abs().sum() / params.numel()
 
-    def fit(self, G, epochs, output_directory: Path, experiment_info: dict, lr=0.01, loss_f=None, verbose=False):
+    def fit(
+        self,
+        G,
+        epochs,
+        output_directory: Path,
+        experiment_info: dict,
+        lr=0.01,
+        loss_f=None,
+        verbose=False,
+    ):
         """train the MLP"""
 
         logger.info(f"n# of nodes in graph: {G.edge_index.max().item() + 1}")
@@ -194,24 +200,26 @@ class N_PGExplainer(nn.Module):
 
         # predicted pos weighted BCEloss for MI
         if loss_f is None:
-            mal_weight = (positive_predictions == 0).sum() / (positive_predictions == 1).sum()
-            logger.info(f'using weight: {mal_weight}')
+            mal_weight = (positive_predictions == 0).sum() / (
+                positive_predictions == 1
+            ).sum()
+            logger.info(f"using weight: {mal_weight}")
             loss_f = nn.BCEWithLogitsLoss(pos_weight=torch.FloatTensor([mal_weight]))
 
         # train MLP on window
         optimizer = torch.optim.Adam(self.mlp.parameters(), lr=lr)
         losses, mask_regularization = [], []
-        best_loss = float('inf')
+        best_loss = float("inf")
 
         # ------------------------------------------------------------------------
         # ------------------------- MAIN EXPLANATION LEARNING --------------------
 
         logger.info("training..")
         for epc in tqdm(range(1, 1 + epochs)):
-            logger.info(f'beginning epoch {epc}')
+            logger.info(f"beginning epoch {epc}")
 
             mask_logits = self.mlp(node_embeddings).squeeze()
-            logger.info('aproximating subgraph predictions')
+            logger.info("aproximating subgraph predictions")
             masked_y_pred_mean_logits, average_near_binary_mask = (
                 self.approximate_subgraph_BCD_with_prior_masking(G, mask_logits)
             )
@@ -224,7 +232,7 @@ class N_PGExplainer(nn.Module):
             entr_reg, mean_reg = self.regularization(mask)
             mlp_l1_reg = self.mlp_lasso_reg * self.lasso_reg()
 
-            logger.info('backwards and step')
+            logger.info("backwards and step")
             total_loss = loss + entr_reg + mean_reg + mlp_l1_reg
             optimizer.zero_grad()
             total_loss.backward()
@@ -246,12 +254,13 @@ class N_PGExplainer(nn.Module):
             )
 
             # rest of tensorboard logging
-            logger.info(f'writing to tensorboard at {output_directory}')
+            logger.info(f"writing to tensorboard at {output_directory}")
             from torch.utils.tensorboard import SummaryWriter
+
             writer = SummaryWriter(log_dir=output_directory)
 
             # scalars
-            logger.info('scalars')
+            logger.info("scalars")
             writer.add_scalar(
                 f"all/Mean_Masked_Mal_Preds",
                 (y_pred_masked > 0.5).float().sum(),
@@ -272,7 +281,7 @@ class N_PGExplainer(nn.Module):
             )
 
             # histograms
-            logger.info('histograms')
+            logger.info("histograms")
             writer.add_histogram(f"Mean_masked_prediction", y_pred_masked, epc)
             writer.add_histogram(f"mask", mask, epc)
             writer.add_histogram(f"mask_logits", mask_logits, epc)
@@ -281,23 +290,23 @@ class N_PGExplainer(nn.Module):
             )
 
             # write the current and best masks
-            logger.info(f'writing current and best masks to {output_directory}')
+            logger.info(f"writing current and best masks to {output_directory}")
             run = {
-                'node_mask': mask,
-                'losses': losses,
-                'mask_regularization': mask_regularization,
-                'average_near_binary_mask': average_near_binary_mask,
-                'y_pred_masked': y_pred_masked,
-                'y_pred': y_pred,
-                'info': experiment_info
+                "node_mask": mask,
+                "losses": losses,
+                "mask_regularization": mask_regularization,
+                "average_near_binary_mask": average_near_binary_mask,
+                "y_pred_masked": y_pred_masked,
+                "y_pred": y_pred,
+                "info": experiment_info,
             }
 
-            with open(output_directory / 'current_mask.pkl', 'wb') as f:
+            with open(output_directory / "current_mask.pkl", "wb") as f:
                 pickle.dump(run, f)
 
             if total_loss < best_loss:
                 best_loss = total_loss
-                with open(output_directory / 'best_mask.pkl', 'wb') as f:
+                with open(output_directory / "best_mask.pkl", "wb") as f:
                     pickle.dump(run, f)
 
             # messy debugging, delete later
@@ -321,12 +330,11 @@ class N_PGExplainer(nn.Module):
         return (mask, losses, mask_regularization)
 
 
-
 def main(args):
     logger.info(f"running with args: {args}")
     device = args.device
 
-    # open EgraphSAGE run     
+    # open EgraphSAGE run
     run_dir = Path(args.run_dir)
     with open(run_dir / "experiment.pkl", "rb") as f:
         run_info = pickle.load(f)
@@ -339,7 +347,7 @@ def main(args):
     # downsample of prototyping
     downsample = args.prototype_downsample_rate
     if downsample is not None:
-        logger.warning('downsampling flows will ruin temporal continguency')
+        logger.warning("downsampling flows will ruin temporal continguency")
         l = len(test_flows)
         test_flows = test_flows.sample(frac=downsample, random_state=0)
 
@@ -356,7 +364,7 @@ def main(args):
     model.to(device)
 
     # setup up explaination directory
-    metrics_output_dir = Path(args.explaination_dir) 
+    metrics_output_dir = Path(args.explaination_dir)
     if args.add_timestamp_subfolder:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         metrics_output_dir = metrics_output_dir / timestamp
@@ -369,13 +377,13 @@ def main(args):
 
     explainer = N_PGExplainer(
         model=model,
-        model_embedding_features=256, # ! assumption
+        model_embedding_features=256,  # ! assumption
         hidden_parameters=args.parameters,
         node_mask_entropy_reg=args.node_entropy_reg,
         node_mask_sum_reg=args.node_sum_reg,
         mlp_lasso_reg=args.lasso_reg,
         subgraph_samples=args.subgraph_samples,
-        tau=args.tau
+        tau=args.tau,
     )
 
     experimental_output = {
@@ -391,36 +399,35 @@ def main(args):
 
     logger.info("learning explanation")
     mask, losses, mask_regularization = explainer.fit(
-        G, 
-        output_directory=metrics_output_dir, 
-        epochs=args.epochs, 
+        G,
+        output_directory=metrics_output_dir,
+        epochs=args.epochs,
         lr=args.learning_rate,
-        experiment_info=experimental_output
+        experiment_info=experimental_output,
     )
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("-e", "--epochs",               default=50, type=int)
-    parser.add_argument("-lr", "--learning-rate",       default=0.01, type=float)
-    parser.add_argument("-ner", "--node-entropy-reg",   default=0.05, type=float)
-    parser.add_argument("-nsr", "--node-sum-reg",       default=0.05, type=float)
-    parser.add_argument("-l", "--lasso-reg",            default=0.005, type=float)
-    parser.add_argument("-s", "--subgraph-samples",     default=10, type=int)
-    parser.add_argument("-t", "--tau",                  default=0.5, type=float)
+    parser.add_argument("-e", "--epochs", default=50, type=int)
+    parser.add_argument("-lr", "--learning-rate", default=0.01, type=float)
+    parser.add_argument("-ner", "--node-entropy-reg", default=0.05, type=float)
+    parser.add_argument("-nsr", "--node-sum-reg", default=0.05, type=float)
+    parser.add_argument("-l", "--lasso-reg", default=0.005, type=float)
+    parser.add_argument("-s", "--subgraph-samples", default=10, type=int)
+    parser.add_argument("-t", "--tau", default=0.5, type=float)
     parser.add_argument("--device", default="cpu")
-    parser.add_argument('--prototype-downsample-rate', default=None, type=float)
+    parser.add_argument("--prototype-downsample-rate", default=None, type=float)
     parser.add_argument(
         "-p", "--parameters", help="number of parameters in MLP", default=64, type=int
     )
     parser.add_argument(
         "--run-dir",
     )
+    parser.add_argument("--explaination-dir")
     parser.add_argument(
-        "--explaination-dir"
-    )
-    parser.add_argument(
-        "--add-timestamp-subfolder", action="store_true", help="Add a timestamp subfolder to the explanation directory"
+        "--add-timestamp-subfolder",
+        action="store_true",
+        help="Add a timestamp subfolder to the explanation directory",
     )
     main(parser.parse_args())
-

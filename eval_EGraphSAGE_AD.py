@@ -32,6 +32,7 @@ def get_metrics(y_true: torch.Tensor, y_pred_probs: torch.Tensor, threshold=0.5)
     F1 = 2 * P * R / (P + R) if P + R > 0 else 0.0
     return (pr_auc, roc_auc_score(y_true, y_pred_probs), F1, P, R)
 
+
 def most_recent_object(exp_dir):
     """tensorboard log directory (most recently created in interm/runs)"""
     exp_dirs = list(Path(exp_dir).glob("*"))

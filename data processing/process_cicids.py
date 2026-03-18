@@ -8,24 +8,24 @@ from loguru import logger
 
 print("Loading data")
 flows = pd.read_csv(
-    "../raw/f78acbaa2afe1595_NFV3DATA-A11964_A11964/data/NF-CICIDS2018-v3.csv", 
-
+    "../raw/f78acbaa2afe1595_NFV3DATA-A11964_A11964/data/NF-CICIDS2018-v3.csv",
 )
 print(f"Data loaded successfully, {len(flows)} flows")
 
 # ! ignoring port information
-flows["src"] = (
-    flows["IPV4_SRC_ADDR"].astype(str)
-)
-flows["dst"] = (
-    flows["IPV4_DST_ADDR"].astype(str)
-)
+flows["src"] = flows["IPV4_SRC_ADDR"].astype(str)
+flows["dst"] = flows["IPV4_DST_ADDR"].astype(str)
 
 # !! TODO: redo this script with port numbers
-flows.drop(["Label", 
-            # "L4_SRC_PORT", 
-            # "L4_DST_PORT"
-            ], axis=1, inplace=True)
+flows.drop(
+    [
+        "Label",
+        # "L4_SRC_PORT",
+        # "L4_DST_PORT"
+    ],
+    axis=1,
+    inplace=True,
+)
 flows.drop(
     ["IPV4_SRC_ADDR", "IPV4_DST_ADDR"],
     axis=1,
@@ -77,7 +77,12 @@ for c in high_count_categorical:
 low_count_categorical = non_ordinal
 
 # split high_count_categorical into truly continuous vs categorical
-high_count_truly_categorical = ["PROTOCOL", "ICMP_TYPE", "ICMP_IPV4_TYPE", "DNS_QUERY_TYPE"]
+high_count_truly_categorical = [
+    "PROTOCOL",
+    "ICMP_TYPE",
+    "ICMP_IPV4_TYPE",
+    "DNS_QUERY_TYPE",
+]
 high_count_truly_numerical = ["DNS_QUERY_ID", "DNS_TTL_ANSWER", "L7_PROTO"]
 
 numerical = [
@@ -135,32 +140,48 @@ print(
 # -- Appriopriate attack classes
 
 attack_cat_mapping = {
-	'BruteForce': ['SSH-Bruteforce', 'FTP-BruteForce', 'Brute_Force_-Web', 'Brute_Force_-XSS', 'Brute_Force_-SQLi'],
-	'Dos': ['DoS_attacks-Hulk', 'DoS_attacks-GoldenEye', 'DoS_attacks-Slowloris', 'DoS_attacks-SlowHTTPTest'],
-	'DDoS': ['DDOS_attack-LOIC-UDP', 'DDoS_attacks-LOIC-HTTP', 'DDOS_attack-HOIC']
+    "BruteForce": [
+        "SSH-Bruteforce",
+        "FTP-BruteForce",
+        "Brute_Force_-Web",
+        "Brute_Force_-XSS",
+        "Brute_Force_-SQLi",
+    ],
+    "Dos": [
+        "DoS_attacks-Hulk",
+        "DoS_attacks-GoldenEye",
+        "DoS_attacks-Slowloris",
+        "DoS_attacks-SlowHTTPTest",
+    ],
+    "DDoS": ["DDOS_attack-LOIC-UDP", "DDoS_attacks-LOIC-HTTP", "DDOS_attack-HOIC"],
 }
+
+
 # convert attack labels to categories in mapping, if it occurs in the mapping lists
 def map_attack_to_category(attack):
-	for category, attack_list in attack_cat_mapping.items():
-		if attack in attack_list:
-			return category
-	return attack  # return original label if not found in mapping
+    for category, attack_list in attack_cat_mapping.items():
+        if attack in attack_list:
+            return category
+    return attack  # return original label if not found in mapping
 
-flows['Attack'] = flows['Attack'].apply(map_attack_to_category)
+
+flows["Attack"] = flows["Attack"].apply(map_attack_to_category)
 logger.info(f'flows["Attack"].value_counts():\n{flows["Attack"].value_counts()}')
 
 # also remove sql injection (only 400 flows, untrainable)
-flows = flows[flows['Attack'] != 'SQL_Injection']
+flows = flows[flows["Attack"] != "SQL_Injection"]
 
 
 # -- Continguous chunk downsmapling
 
-print('RESAMPLING')
+print("RESAMPLING")
 downsample_rate = 0.3
 
 # randomly selected chunks thats make up 10% of flows
 chunk_idxs = np.arange(0, len(flows), chunk_size)
-sampled_chunk_idxs = np.random.choice(chunk_idxs, size=int(downsample_rate * len(chunk_idxs)), replace=False)
+sampled_chunk_idxs = np.random.choice(
+    chunk_idxs, size=int(downsample_rate * len(chunk_idxs)), replace=False
+)
 chunks = [flows[i : i + chunk_size] for i in sampled_chunk_idxs]
 
 
@@ -172,7 +193,7 @@ train_flows = pd.concat([chunks[i] for i in train_idx]).reset_index(drop=True)
 test_flows = pd.concat([chunks[i] for i in test_idx]).reset_index(drop=True)
 
 # log the percentage occurance of each class in 'attack' for train and test
-print('resampled size for train and test:')
+print("resampled size for train and test:")
 print(f"Train size: {len(train_flows)}, Test size: {len(test_flows)}")
 print("\resampled Class distribution in training set:")
 print(train_flows.Attack.value_counts(normalize=True))

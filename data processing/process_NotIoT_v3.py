@@ -14,12 +14,8 @@ flows = pd.read_csv(
 print(f"Data loaded successfully, {len(flows)} flows")
 
 # ignoring port information
-flows["src"] = (
-    flows["IPV4_SRC_ADDR"].astype(str)
-)
-flows["dst"] = (
-    flows["IPV4_DST_ADDR"].astype(str)
-)
+flows["src"] = flows["IPV4_SRC_ADDR"].astype(str)
+flows["dst"] = flows["IPV4_DST_ADDR"].astype(str)
 
 flows.drop(["Label"], axis=1, inplace=True)
 flows.drop(
@@ -50,8 +46,8 @@ high_count_categorical = [
 
 
 # barely any flows in these
-flows = flows[flows['Attack'] != 'ransomware']
-flows = flows[flows['Attack'] != 'mitm']
+flows = flows[flows["Attack"] != "ransomware"]
+flows = flows[flows["Attack"] != "mitm"]
 
 # -- clamping
 
@@ -77,7 +73,12 @@ for c in high_count_categorical:
 low_count_categorical = non_ordinal
 
 # split high_count_categorical into truly continuous vs categorical
-high_count_truly_categorical = ["PROTOCOL", "ICMP_TYPE", "ICMP_IPV4_TYPE", "DNS_QUERY_TYPE"]
+high_count_truly_categorical = [
+    "PROTOCOL",
+    "ICMP_TYPE",
+    "ICMP_IPV4_TYPE",
+    "DNS_QUERY_TYPE",
+]
 high_count_truly_numerical = ["DNS_QUERY_ID", "DNS_TTL_ANSWER", "L7_PROTO"]
 
 numerical = [
@@ -134,23 +135,31 @@ print(
 
 # -- Continguous chunk downsmapling
 
-print('RESAMPLING')
+print("RESAMPLING")
 downsample_rate = 0.3
 
 
 # take the first 30% benign flows
-benign_flows = flows[flows.Attack == 'Benign'].iloc[: int(downsample_rate * len(flows[flows.Attack == 'Benign']))]
+benign_flows = flows[flows.Attack == "Benign"].iloc[
+    : int(downsample_rate * len(flows[flows.Attack == "Benign"]))
+]
 # take 10% flows from EACH attack category, being careful to keep the attack category in the dataframe
 resampled_attack_flows = pd.concat(
     [
-        flows[flows.Attack == attack].iloc[: int(downsample_rate * len(flows[flows.Attack == attack]))]        
+        flows[flows.Attack == attack].iloc[
+            : int(downsample_rate * len(flows[flows.Attack == attack]))
+        ]
         for attack in flows.Attack.unique()
-        if attack != 'Benign'
+        if attack != "Benign"
     ]
 )
 
 # combine with benign flows and randomize
-new_flows = pd.concat([benign_flows, resampled_attack_flows]).sample(frac=1, random_state=0).reset_index(drop=True)
+new_flows = (
+    pd.concat([benign_flows, resampled_attack_flows])
+    .sample(frac=1, random_state=0)
+    .reset_index(drop=True)
+)
 
 # split into test and train
 test_split = 0.2
@@ -172,7 +181,7 @@ train_flows, test_flows = (
 # test_flows = pd.concat([chunks[i] for i in test_idx]).reset_index(drop=True)
 
 # log the percentage occurance of each class in 'attack' for train and test
-print('resampled size for train and test:')
+print("resampled size for train and test:")
 print(f"Train size: {len(train_flows)}, Test size: {len(test_flows)}")
 print("\resampled Class distribution in training set:")
 print(train_flows.Attack.value_counts(normalize=True))

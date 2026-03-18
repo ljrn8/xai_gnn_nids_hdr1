@@ -3,7 +3,7 @@ from torch import nn
 import torch
 from loguru import logger
 from torch_scatter import scatter_mean
-from ML_utils import  graph_encode
+from ML_utils import graph_encode
 import numpy as np
 from torch import Tensor
 import pickle
@@ -12,6 +12,7 @@ from torch.utils.tensorboard import SummaryWriter
 from ML_utils import write_metrics
 from tqdm import tqdm
 import itertools
+
 
 class EGraphSAGE(nn.Module):
     """for binary flow classification"""
@@ -134,7 +135,9 @@ class EGraphSAGE(nn.Module):
 
         return loss, y, probs, emb
 
-    def pass_flow_windows(self, flow_generator, n_windows=None, optimizer=None, train=True, **kwargs):
+    def pass_flow_windows(
+        self, flow_generator, n_windows=None, optimizer=None, train=True, **kwargs
+    ):
         """pass flow graphs from flow generator, with kwargs for pass_flowgraph using batch gradient descent (*NOT SGD)
         Returns (Tensors): Average loss, hstacked losses per windows, y and output probabilities
         """
@@ -142,18 +145,23 @@ class EGraphSAGE(nn.Module):
             self.train()
             optimizer.zero_grad()
 
-        window_losses, ys, probs = [], [] ,[]    
+        window_losses, ys, probs = [], [], []
         for train_window in tqdm(flow_generator, total=n_windows):
-            G, _ = graph_encode(train_window, edge_cols=['src', 'dst'], 
-                                linegraph=False, target_col='Attack')
-            loss, y, prob, _ = self.pass_flowgraph(G=G, train_now=False, 
-                                                   optimizer=optimizer, **kwargs)
+            G, _ = graph_encode(
+                train_window,
+                edge_cols=["src", "dst"],
+                linegraph=False,
+                target_col="Attack",
+            )
+            loss, y, prob, _ = self.pass_flowgraph(
+                G=G, train_now=False, optimizer=optimizer, **kwargs
+            )
             window_losses.append(loss)
             ys.append(y)
             probs.append(prob)
             # acc gradients, dont update untill afterwards
             if train:
-                loss.backward() 
+                loss.backward()
 
             del G
 
@@ -172,7 +180,7 @@ class EGraphSAGE(nn.Module):
         epochs,
         experiment_summary: dict,
         experimental_directory: Path,
-        n_train_windows=None
+        n_train_windows=None,
     ):
         """Self explanatory"""
         writer = SummaryWriter(log_dir=experimental_directory)
@@ -189,11 +197,11 @@ class EGraphSAGE(nn.Module):
             logger.info("training...")
             self.train()
             av_loss, window_losses, y, probs = self.pass_flow_windows(
-                train_flow_iter, 
+                train_flow_iter,
                 criterion=criterion,
                 optimizer=optimizer,
                 train=True,
-                n_windows=n_train_windows
+                n_windows=n_train_windows,
             )
 
             train_pr_auc, train_roc_auc, train_f1, prec, rec = write_metrics(
@@ -206,11 +214,13 @@ class EGraphSAGE(nn.Module):
             logger.info("testing...")
             self.eval()
             with torch.no_grad():
-                av_test_loss, test_window_losses, test_y, test_probs = self.pass_flow_windows(
-                    flow_generator=test_flow_iter, 
-                    criterion=criterion,
-                    optimizer=None,
-                    train=False,
+                av_test_loss, test_window_losses, test_y, test_probs = (
+                    self.pass_flow_windows(
+                        flow_generator=test_flow_iter,
+                        criterion=criterion,
+                        optimizer=None,
+                        train=False,
+                    )
                 )
                 pr_auc, roc_auc, f1, prec, rec = write_metrics(
                     test_y, test_probs, writer, epc, av_test_loss, train_category=False
@@ -224,7 +234,7 @@ class EGraphSAGE(nn.Module):
                 f"Train ROC AUC: {train_roc_auc:.4f} \n"
                 f"Train PR AUC: {train_pr_auc:.4f} \n"
                 f"Train F1: {train_f1:.4f} \n"
-                '--\n'
+                "--\n"
                 f"Test Av Window loss: {av_test_loss:.4f} \n"
                 f"Test ROC AUC: {roc_auc:.4f} \n"
                 f"Test PR AUC: {pr_auc:.4f} \n"
@@ -235,7 +245,7 @@ class EGraphSAGE(nn.Module):
             with open(experimental_directory / "current_model.pkl", "wb") as f:
                 pickle.dump(self, f)
 
-            # Write Metadata 
+            # Write Metadata
             logger.info(f"saving to experimental directory: {experimental_directory}")
             with open(experimental_directory / "experiment.pkl", "wb") as f:
                 pickle.dump(experiment_summary, f)
